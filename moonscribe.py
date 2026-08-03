@@ -87,6 +87,7 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QStyledItemDelegate,
+    QTabWidget,
     QTextEdit,
     QToolBar,
     QToolButton,
@@ -578,17 +579,21 @@ class MoonScribe(QMainWindow):
         super().__init__()
         self.resize(900, 640)
 
-        self.editor = QTextEdit()
-        self.editor.setFrameShape(QFrame.Shape.NoFrame)
-        self.editor.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)  # word wrap on
-        self.editor.setPlaceholderText("Begin writing…")
-        self.editor.document().setDocumentMargin(36)
-        self.setCentralWidget(self.editor)
-        # Repaint the cosmic scene whenever the writing area is resized.
-        self.editor.viewport().installEventFilter(self)
+        # Session-only tabs: several notes can be open at once, but they're
+        # never restored across launches — every start begins with one blank
+        # tab.  Each tab is its own QTextEdit carrying its own path/state; the
+        # `editor` property below always points at the current tab, so the rest
+        # of the app keeps talking to "the editor" exactly as before.
+        self._wrap_mode = QTextEdit.LineWrapMode.WidgetWidth  # word wrap on
+        self._highlighters = []  # one spell highlighter per open editor
 
-        self.current_path = None  # None means the document has never been saved.
-        self._suggested_name = None  # seeds Save As / Export names after an import
+        self.tabs = QTabWidget()
+        self.tabs.setDocumentMode(True)
+        self.tabs.setMovable(True)
+        self.tabs.setTabsClosable(True)
+        self.tabs.tabCloseRequested.connect(self._close_tab)
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+        self.setCentralWidget(self.tabs)
 
         # Persisted font preferences (favorites + recently used).
         self.RECENT_MAX = 10
@@ -602,9 +607,8 @@ class MoonScribe(QMainWindow):
         # and pushed onto the document as its default, so clicking into an
         # unwritten line never snaps the toolbar — or the next keystrokes — back
         # to the tiny built-in default face.
-        self._base_font = QFont(self.editor.font())
-        self._base_font.setPointSize(12)
-        self.editor.document().setDefaultFont(self._base_font)
+        self._base_font = QFont()
+        self._base_font.setPointSize(12)  # applied to each editor's document
 
         # Recently used emojis, shown as a cluster at the left of the emoji bar.
         self.EMOJI_RECENT_MAX = 8
@@ -620,15 +624,16 @@ class MoonScribe(QMainWindow):
         # Spellchecker: a red wavy underline overlay plus right-click suggestions.
         self._spell = SpellChecker() if SpellChecker is not None else None
         self._spell_enabled = self._spell is not None
-        self._spell_highlighter = SpellHighlighter(self.editor.document(), self)
-        self.editor.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.editor.customContextMenuRequested.connect(self._editor_context_menu)
+        # Each tab's editor gets its own highlighter + context menu in _new_editor.
 
         # Autosave / crash recovery bookkeeping.
         appdata = QStandardPaths.writableLocation(
             QStandardPaths.StandardLocation.AppDataLocation
         )
         self._recovery_path = os.path.join(appdata, "autosave.html")
+
+        # Open the first blank tab now, so the rest of setup has a live editor.
+        self._add_tab()
 
         self._build_menu()
         self._build_toolbar()
@@ -642,10 +647,8 @@ class MoonScribe(QMainWindow):
         icon = QIcon(ICON_PNG)
         self.setWindowIcon(icon if not icon.isNull() else self._moon_icon("#c9b9f5"))
         self._update_title()
-        # Keep the window title's "unsaved" marker in sync as the user edits.
-        self.editor.document().modificationChanged.connect(self._update_title)
-        # Keep the toolbar controls reflecting the formatting at the cursor.
-        self.editor.currentCharFormatChanged.connect(self._sync_toolbar)
+        # (Per-editor signals — modification, format sync, counts, spellcheck —
+        #  are wired up in _new_editor when each tab is created.)
         # Start typing in the last font used, so it carries across sessions.
         self._restore_last_font()
 
@@ -657,11 +660,177 @@ class MoonScribe(QMainWindow):
         # Offer to restore a leftover recovery file once the window is up.
         QTimer.singleShot(0, self._maybe_recover)
 
+    # ---- Tabs (session-only) ----------------------------------------------
+    # The whole app is written against `self.editor`; making it a property that
+    # returns the current tab's QTextEdit means every existing feature keeps
+    # working while operating on whichever note is in front.  Per-note bits
+    # (file path, import name) live on the editor object itself.
+    @property
+    def editor(self):
+        return self.tabs.currentWidget()
+
+    @property
+    def current_path(self):
+        e = self.editor
+        return e._path if e is not None else None
+
+    @current_path.setter
+    def current_path(self, value):
+        e = self.editor
+        if e is not None:
+            e._path = value
+
+    @property
+    def _suggested_name(self):
+        e = self.editor
+        return e._suggested if e is not None else None
+
+    @_suggested_name.setter
+    def _suggested_name(self, value):
+        e = self.editor
+        if e is not None:
+            e._suggested = value
+
+    def _all_editors(self):
+        return [self.tabs.widget(i) for i in range(self.tabs.count())]
+
+    def _new_editor(self):
+        """Build a fully wired editor for a new tab (same setup the single
+        editor used to get, plus its own path/state and spell highlighter)."""
+        editor = QTextEdit()
+        editor.setFrameShape(QFrame.Shape.NoFrame)
+        editor.setLineWrapMode(self._wrap_mode)
+        editor.setPlaceholderText("Begin writing…")
+        editor.document().setDocumentMargin(36)
+        editor.document().setDefaultFont(self._base_font)
+
+        # Per-note state (mirrors the old self.current_path / _suggested_name).
+        editor._path = None
+        editor._suggested = None
+
+        # Right-click spelling suggestions for this note.
+        editor.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        editor.customContextMenuRequested.connect(
+            lambda pos, e=editor: self._editor_context_menu(e, pos)
+        )
+        editor._highlighter = SpellHighlighter(editor.document(), self)
+        self._highlighters.append(editor._highlighter)
+
+        # Repaint the cosmic scene whenever this note's writing area resizes.
+        editor.viewport().installEventFilter(self)
+        editor.document().modificationChanged.connect(
+            lambda _=False, e=editor: self._on_modified_changed(e)
+        )
+        editor.currentCharFormatChanged.connect(self._sync_toolbar)
+        editor.textChanged.connect(self._update_counts)
+
+        # A brand-new note is pristine: setting the default font and attaching
+        # the spell highlighter can dirty the document, so clear that here.
+        # Otherwise every empty tab would falsely prompt "unsaved changes".
+        editor.document().setModified(False)
+        return editor
+
+    def _add_tab(self, make_current=True):
+        """Create a fresh blank tab and (by default) switch to it."""
+        editor = self._new_editor()
+        index = self.tabs.addTab(editor, "Untitled")
+        self._apply_editor_appearance_one(editor, THEMES[self._current_theme])
+        if make_current:
+            self.tabs.setCurrentIndex(index)
+        self._update_tabbar_visibility()
+        return editor
+
+    def _update_tabbar_visibility(self):
+        """Keep the minimal look: the tab strip only appears with 2+ notes."""
+        self.tabs.tabBar().setVisible(self.tabs.count() > 1)
+
+    def _update_tab_label(self, editor):
+        index = self.tabs.indexOf(editor)
+        if index < 0:
+            return
+        if editor._path:
+            name = os.path.basename(editor._path)
+        elif editor._suggested:
+            name = editor._suggested
+        else:
+            name = "Untitled"
+        marker = "*" if editor.document().isModified() else ""
+        self.tabs.setTabText(index, f"{marker}{name}")
+
+    def _on_tab_changed(self, index):
+        editor = self.editor
+        if editor is None:
+            return
+        self._update_counts()
+        self._update_title()
+        self._sync_toolbar(editor.currentCharFormat())
+        if THEMES[self._current_theme]["cosmic"]:
+            editor._canvas_size = None
+            self._refresh_cosmic_canvas(editor, force=True)
+        editor.setFocus()
+
+    def _on_modified_changed(self, editor):
+        self._update_tab_label(editor)
+        if editor is self.editor:
+            self._update_title()
+
+    def _target_editor_for_open(self):
+        """Open into the current tab if it's pristine (blank + unsaved),
+        otherwise open the file in a new tab."""
+        e = self.editor
+        if (
+            e is not None
+            and e._path is None
+            and not e.document().isModified()
+            and not e.toPlainText().strip()
+        ):
+            return e
+        return self._add_tab()
+
+    def _close_current_tab(self):
+        self._close_tab(self.tabs.currentIndex())
+
+    def _close_tab(self, index):
+        editor = self.tabs.widget(index)
+        if editor is None:
+            return
+        if not self._confirm_close_editor(editor):
+            return
+        if editor._highlighter in self._highlighters:
+            self._highlighters.remove(editor._highlighter)
+        self.tabs.removeTab(index)
+        editor.deleteLater()
+        # Never leave zero tabs — closing the last note opens a fresh blank one.
+        if self.tabs.count() == 0:
+            self._add_tab()
+        self._update_tabbar_visibility()
+
+    def _confirm_close_editor(self, editor):
+        """Return True if this note is safe to close (saved, discarded, or had
+        no unsaved changes).  Warns for THIS note specifically."""
+        if not editor.document().isModified():
+            return True
+        self.tabs.setCurrentWidget(editor)  # show what's being decided on
+        choice = QMessageBox.warning(
+            self,
+            "MoonScribe",
+            "This note has unsaved changes. Save them?",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+        )
+        if choice == QMessageBox.StandardButton.Save:
+            return self.file_save()
+        if choice == QMessageBox.StandardButton.Discard:
+            return True
+        return False  # Cancel
+
     # ---- Menu construction -------------------------------------------------
     def _build_menu(self):
         file_menu = self.menuBar().addMenu("&File")
-        self._add_action(file_menu, "&New", QKeySequence.StandardKey.New, self.file_new)
+        self._add_action(file_menu, "&New Tab", QKeySequence.StandardKey.New, self.file_new)
         self._add_action(file_menu, "&Open…", QKeySequence.StandardKey.Open, self.file_open)
+        self._add_action(file_menu, "&Close Tab", QKeySequence.StandardKey.Close, self._close_current_tab)
         file_menu.addSeparator()
         self._add_action(file_menu, "&Save", QKeySequence.StandardKey.Save, self.file_save)
         self._add_action(file_menu, "Save &As…", QKeySequence.StandardKey.SaveAs, self.file_save_as)
@@ -711,20 +880,24 @@ class MoonScribe(QMainWindow):
         return action
 
     def _toggle_word_wrap(self, on):
-        mode = QTextEdit.LineWrapMode.WidgetWidth if on else QTextEdit.LineWrapMode.NoWrap
-        self.editor.setLineWrapMode(mode)
+        self._wrap_mode = (
+            QTextEdit.LineWrapMode.WidgetWidth if on else QTextEdit.LineWrapMode.NoWrap
+        )
+        for editor in self._all_editors():
+            editor.setLineWrapMode(self._wrap_mode)
 
     # ---- Spellchecker ------------------------------------------------------
     def _toggle_spellcheck(self, on):
         self._spell_enabled = on
-        self._spell_highlighter.rehighlight()  # apply or clear the underlines
+        for highlighter in self._highlighters:  # apply or clear across all tabs
+            highlighter.rehighlight()
 
-    def _editor_context_menu(self, pos):
+    def _editor_context_menu(self, editor, pos):
         """Standard editor menu, prefixed with spelling suggestions when the
         word under the cursor is misspelled."""
-        menu = self.editor.createStandardContextMenu()
+        menu = editor.createStandardContextMenu()
         if self._spell is not None and self._spell_enabled:
-            cursor = self.editor.cursorForPosition(pos)
+            cursor = editor.cursorForPosition(pos)
             cursor.select(QTextCursor.SelectionType.WordUnderCursor)
             word = cursor.selectedText()
             if word and SpellHighlighter._WORD_RE.fullmatch(word) and word.lower() not in self._spell:
@@ -1119,6 +1292,8 @@ class MoonScribe(QMainWindow):
 
     def _sync_toolbar(self, fmt):
         """Reflect the format under the cursor in the toolbar controls."""
+        if not hasattr(self, "font_box"):  # toolbar not built yet (early setup)
+            return
         self._syncing_toolbar = True
         families = fmt.fontFamilies()
         if families:
@@ -1294,8 +1469,7 @@ class MoonScribe(QMainWindow):
         self.fullscreen_btn.clicked.connect(self._toggle_fullscreen)
         bar.addPermanentWidget(self.fullscreen_btn)
 
-        self.editor.textChanged.connect(self._update_counts)
-        self._update_counts()
+        self._update_counts()  # per-editor textChanged is wired in _new_editor
 
     def _toggle_fullscreen(self):
         if self.isFullScreen():
@@ -1304,6 +1478,8 @@ class MoonScribe(QMainWindow):
             self.showFullScreen()
 
     def _update_counts(self):
+        if self.editor is None or not hasattr(self, "count_label"):
+            return
         text = self.editor.toPlainText()
         # A word must contain at least one letter or digit, so a lone emoji
         # or stray punctuation isn't counted as a word.
@@ -1327,23 +1503,27 @@ class MoonScribe(QMainWindow):
 
     # ---- Cosmic editor scene ----------------------------------------------
     def eventFilter(self, obj, event):
-        if (
-            obj is self.editor.viewport()
-            and event.type() == QEvent.Type.Resize
-            and THEMES[self._current_theme]["cosmic"]
-        ):
-            self._refresh_cosmic_canvas()
+        if event.type() == QEvent.Type.Resize and THEMES[self._current_theme]["cosmic"]:
+            editor = self.editor
+            if editor is not None and obj is editor.viewport():
+                self._refresh_cosmic_canvas(editor)
         return super().eventFilter(obj, event)
 
-    def _refresh_cosmic_canvas(self, force=False):
-        """Repaint the nebula scene to fit the editor viewport exactly."""
-        viewport = self.editor.viewport()
+    def _refresh_cosmic_canvas(self, editor=None, force=False):
+        """Repaint the nebula scene to fit the given editor's viewport exactly.
+
+        Each tab keeps its own painted Base brush (cached on the editor), so
+        switching notes shows the scene correctly sized for that tab."""
+        editor = editor or self.editor
+        if editor is None:
+            return
+        viewport = editor.viewport()
         width, height = viewport.width(), viewport.height()
         if width <= 0 or height <= 0:
             return
-        if not force and self._canvas_size == (width, height):
+        if not force and getattr(editor, "_canvas_size", None) == (width, height):
             return
-        self._canvas_size = (width, height)
+        editor._canvas_size = (width, height)
 
         scene = self._paint_cosmic_scene(width, height)
         palette = viewport.palette()
@@ -1410,20 +1590,25 @@ class MoonScribe(QMainWindow):
             self.setMinimumWidth(max(760, self._format_toolbar.sizeHint().width() + 12))
 
     def _apply_editor_appearance(self, theme):
-        """Set editor text/placeholder/selection colors and background per theme."""
-        palette = self.editor.palette()
+        """Apply the theme's editor colours/background to every open tab."""
+        for editor in self._all_editors():
+            self._apply_editor_appearance_one(editor, theme)
+
+    def _apply_editor_appearance_one(self, editor, theme):
+        """Set one editor's text/placeholder/selection colours and background."""
+        palette = editor.palette()
         palette.setColor(QPalette.ColorRole.Text, QColor(theme["editor_fg"]))
         palette.setColor(QPalette.ColorRole.PlaceholderText, QColor(theme["placeholder"]))
         palette.setColor(QPalette.ColorRole.Highlight, QColor(theme["sel_bg"]))
         palette.setColor(QPalette.ColorRole.HighlightedText, QColor(theme["sel_fg"]))
         palette.setColor(QPalette.ColorRole.Base, QColor(theme["editor_bg"]))
-        self.editor.setPalette(palette)
+        editor.setPalette(palette)
 
         if theme["cosmic"]:
-            self._canvas_size = None  # force a repaint at the current size
-            self._refresh_cosmic_canvas(force=True)
+            editor._canvas_size = None  # force a repaint at the current size
+            self._refresh_cosmic_canvas(editor, force=True)
         else:
-            viewport = self.editor.viewport()
+            viewport = editor.viewport()
             vpal = viewport.palette()
             vpal.setColor(QPalette.ColorRole.Base, QColor(theme["editor_bg"]))
             viewport.setPalette(vpal)
@@ -1517,6 +1702,13 @@ class MoonScribe(QMainWindow):
             QScrollBar::handle:horizontal:hover {{ background: {theme['scrollbar_hover']}; }}
             QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
             QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
+            QTabWidget::pane {{ border: none; }}
+            QTabBar {{ background: transparent; qproperty-drawBase: 0; }}
+            QTabBar::tab {{ background: {theme['surface']}; color: {theme['muted']}; border: 1px solid {panel_line}; border-bottom: none; border-top-left-radius: 8px; border-top-right-radius: 8px; padding: 5px 14px; margin: 3px 2px 0 0; }}
+            QTabBar::tab:selected {{ background: {theme['button_hover']}; color: {theme['chrome_fg']}; }}
+            QTabBar::tab:hover {{ background: {theme['button_hover']}; }}
+            QTabBar::close-button {{ subcontrol-position: right; }}
+            QTabBar::close-button:hover {{ background: {theme['accent']}; border-radius: 4px; }}
             """
         )
 
@@ -1534,18 +1726,11 @@ class MoonScribe(QMainWindow):
 
     # ---- File actions ------------------------------------------------------
     def file_new(self):
-        if not self._confirm_discard_changes():
-            return
-        self.editor.clear()
-        self.current_path = None
-        self._suggested_name = None
-        self.editor.document().setModified(False)
-        self._clear_recovery()
+        # A new note simply opens a fresh tab — nothing is discarded.
+        self._add_tab()
         self._update_title()
 
     def file_open(self):
-        if not self._confirm_discard_changes():
-            return
         path, _ = QFileDialog.getOpenFileName(self, "Open", "", OPEN_FILTER)
         if not path:
             return
@@ -1556,24 +1741,27 @@ class MoonScribe(QMainWindow):
             QMessageBox.warning(self, "MoonScribe", f"Could not open file:\n{error}")
             return
 
+        # Reuse a blank current tab, otherwise open the file in its own tab.
+        editor = self._target_editor_for_open()
+
         lower = path.lower()
         if lower.endswith((NATIVE_EXT, ".html", ".htm")):
             # Drop any baked-in theme block so the editor follows the live theme,
             # not the background stored when the note was last saved/exported.
-            self.editor.setHtml(_THEME_BLOCK_RE.sub("\n", content))
+            editor.setHtml(_THEME_BLOCK_RE.sub("\n", content))
         else:
-            self.editor.setPlainText(content)
+            editor.setPlainText(content)
 
         if lower.endswith(NATIVE_EXT):
             # A native note: Save writes straight back to it.
-            self.current_path = path
-            self._suggested_name = None
+            editor._path = path
+            editor._suggested = None
         else:
             # An imported HTML/TXT file: treat it as a fresh note so Save routes
             # to Save As and writes a proper .mnote instead of overwriting it.
-            self.current_path = None
-            self._suggested_name = os.path.splitext(os.path.basename(path))[0]
-        self.editor.document().setModified(False)
+            editor._path = None
+            editor._suggested = os.path.splitext(os.path.basename(path))[0]
+        editor.document().setModified(False)
         self._update_title()
 
     def file_save(self):
@@ -1812,37 +2000,25 @@ class MoonScribe(QMainWindow):
         return html.replace("<head>", "<head><style>" + block + "</style>", 1)
 
     # ---- Unsaved-changes handling -----------------------------------------
-    def _confirm_discard_changes(self):
-        """Return True if it's safe to proceed (discard/save handled)."""
-        if not self.editor.document().isModified():
-            return True
-
-        choice = QMessageBox.warning(
-            self,
-            "MoonScribe",
-            "You have unsaved changes. Save them?",
-            QMessageBox.StandardButton.Save
-            | QMessageBox.StandardButton.Discard
-            | QMessageBox.StandardButton.Cancel,
-        )
-        if choice == QMessageBox.StandardButton.Save:
-            return self.file_save()
-        if choice == QMessageBox.StandardButton.Discard:
-            return True
-        return False  # Cancel
-
     def closeEvent(self, event):
-        if self._confirm_discard_changes():
-            self._clear_recovery()  # clean exit — no crash recovery needed
-            event.accept()
-        else:
-            event.ignore()
+        # Warn per unsaved tab; any Cancel aborts the whole close.
+        for editor in self._all_editors():
+            if editor.document().isModified():
+                self.tabs.setCurrentWidget(editor)
+                if not self._confirm_close_editor(editor):
+                    event.ignore()
+                    return
+        self._clear_recovery()  # clean exit — no crash recovery needed
+        event.accept()
 
     # ---- Title -------------------------------------------------------------
     def _update_title(self):
-        name = self.current_path if self.current_path else "Untitled"
-        marker = "*" if self.editor.document().isModified() else ""
+        e = self.editor
+        name = e._path if (e is not None and e._path) else "Untitled"
+        marker = "*" if (e is not None and e.document().isModified()) else ""
         self.setWindowTitle(f"{marker}{name} — MoonScribe")
+        if e is not None:
+            self._update_tab_label(e)
 
 
 def main():

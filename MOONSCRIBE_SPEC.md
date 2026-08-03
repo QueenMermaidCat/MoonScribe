@@ -20,9 +20,11 @@ Optional later (NOT now):
 ## Core Rules (STRICT)
 
 - ONLY one main window
-- ONLY one document at a time
-- NO tabs
-- NO multiple document interface
+- **Session-only tabs**: multiple notes may be open at once as tabs, but ONLY
+  for the current run. Every launch starts fresh with a single blank note.
+  Tabs are NEVER persisted or reopened across sessions (deliberately unlike
+  Notepad++). The tab strip is hidden while only one note is open, preserving
+  the minimal look.
 - NO AI features
 - NO cloud sync
 - NO extra popups unless file dialogs
@@ -128,15 +130,23 @@ Symbols — crescent moons at top, line-art next (astro/planets after the rest),
 ---
 
 ## File Features
-- New
+- New Tab (opens a fresh blank note as a tab)
+- Close Tab (Ctrl+W; the last remaining tab is replaced by a fresh blank one)
 - Open (native .mnote, or import .html / .txt)
 - Save / Save As → **.mnote** (native)
 - Export → Offline HTML / PDF / Plain Text (one-way)
 - Exit
 
 Rules:
-- Single document only
-- Prompt before unsaved changes are lost
+- **Tabs are session-only** — see Core Rules. Opening a file reuses the current
+  tab when it is a pristine, untouched blank note; otherwise it opens in a new
+  tab. Each tab carries its own path, unsaved state, theme canvas, word count,
+  and spellcheck.
+- **Prompt per unsaved tab**: closing a tab or the whole window warns
+  (Save / Discard / Cancel) for each note that has unsaved changes; Cancel on
+  any note aborts the close.
+- **Autosave/recovery protects the active note only.** The 60-second backup and
+  crash recovery cover the current tab, consistent with the session-only design.
 - **Native format: `.mnote`** — the editor's own rich-text HTML written verbatim
   (no baked theme), so reopening in MoonScribe restores the note exactly and
   fully editable. Save and Save As always produce `.mnote`.
