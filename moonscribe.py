@@ -583,7 +583,7 @@ class MoonScribe(QMainWindow):
         # Clamp to the screen so it never opens larger than a small display.
         screen = QApplication.primaryScreen()
         avail = screen.availableGeometry() if screen is not None else None
-        default_w = min(1200, avail.width()) if avail else 1200
+        default_w = min(950, avail.width()) if avail else 950
         default_h = min(880, avail.height()) if avail else 880
         self.resize(default_w, default_h)
         self.setMinimumWidth(min(700, default_w))
