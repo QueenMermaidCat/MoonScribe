@@ -2,21 +2,21 @@
 
 *A calm space for your thoughts.*
 
-MoonScribe is a gentle, distraction-free note-taking app for Windows — a quiet
+MoonScribe is a gentle, simple note-taking app for Windows — a quiet
 little writing space with soft themes, a starry "Cosmic" background, and just
 the right amount of formatting. No accounts, no cloud, no clutter. Just you and
 your words.
 
 ---
 
-## ⬇️ Download & run (no coding needed)
+## ⬇️ How to Download
 
 1. Go to the [**Releases**](../../releases/latest) page.
 2. Download **`MoonScribe.zip`** under "Assets."
 3. Unzip it anywhere (for example, your Desktop).
 4. Double-click **`MoonScribe.exe`** to start writing.
 
-That's it — nothing to install. Windows may show a blue "Windows protected your
+🔮 Windows may show a blue "Windows protected your
 PC" notice the first time (this appears for any new app that isn't signed by a
 big company); click **More info → Run anyway** to continue.
 
