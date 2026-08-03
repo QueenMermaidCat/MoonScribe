@@ -579,14 +579,14 @@ class MoonScribe(QMainWindow):
     def __init__(self):
         super().__init__()
         # Roomy default; the writing area gets the extra space. The window can
-        # still be dragged down to an 880px minimum before it stops narrowing.
+        # still be dragged down to a 700px minimum before it stops narrowing.
         # Clamp to the screen so it never opens larger than a small display.
         screen = QApplication.primaryScreen()
         avail = screen.availableGeometry() if screen is not None else None
         default_w = min(1400, avail.width()) if avail else 1400
         default_h = min(880, avail.height()) if avail else 880
         self.resize(default_w, default_h)
-        self.setMinimumWidth(min(880, default_w))
+        self.setMinimumWidth(min(700, default_w))
 
         # Session-only tabs: several notes can be open at once, but they're
         # never restored across launches — every start begins with one blank
