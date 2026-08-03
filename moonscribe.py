@@ -890,7 +890,10 @@ class MoonScribe(QMainWindow):
         self._add_action(export_menu, "Plain &Text…", None, self.export_txt)
 
         file_menu.addSeparator()
-        self._add_action(file_menu, "E&xit", QKeySequence.StandardKey.Quit, self.close)
+        # Use an explicit Ctrl+Q rather than StandardKey.Quit: on Windows the
+        # latter renders in the menu's shortcut column as the literal word
+        # "Exit", so the row reads "Exit    Exit".
+        self._add_action(file_menu, "E&xit", QKeySequence("Ctrl+Q"), self.close)
 
         edit_menu = self.menuBar().addMenu("&Edit")
         # These must act on the CURRENT tab, so route through the self.editor

@@ -4,6 +4,13 @@ All notable changes to MoonScribe are recorded here. 🌙
 
 The newest version is always at the top.
 
+## v1.0.1 — 2026-08-03
+
+### Fixed
+- The **File → Exit** menu item no longer shows the word "Exit" twice. Its
+  shortcut column now reads a proper `Ctrl+Q` instead of the literal text
+  "Exit" that Windows was displaying.
+
 ## v1.0.0 — 2026-08-03
 
 The first public release of MoonScribe!
