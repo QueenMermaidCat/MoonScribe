@@ -578,7 +578,15 @@ class SpellHighlighter(QSyntaxHighlighter):
 class MoonScribe(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.resize(900, 640)
+        # Roomy default; the writing area gets the extra space. The window can
+        # still be dragged down to an 880px minimum before it stops narrowing.
+        # Clamp to the screen so it never opens larger than a small display.
+        screen = QApplication.primaryScreen()
+        avail = screen.availableGeometry() if screen is not None else None
+        default_w = min(1400, avail.width()) if avail else 1400
+        default_h = min(880, avail.height()) if avail else 880
+        self.resize(default_w, default_h)
+        self.setMinimumWidth(min(880, default_w))
 
         # Session-only tabs: several notes can be open at once, but they're
         # never restored across launches — every start begins with one blank
@@ -621,7 +629,6 @@ class MoonScribe(QMainWindow):
         self._current_theme = saved_theme if saved_theme in THEMES else DEFAULT_THEME
         self._canvas_size = None  # last size the cosmic scene was painted at
         self._cosmic_art = QPixmap(COSMIC_ART)  # null if the file is missing
-        self._sized = False  # min width is locked in once, on first show
 
         # Spellchecker: a red wavy underline overlay plus right-click suggestions.
         self._spell = SpellChecker() if SpellChecker is not None else None
@@ -886,14 +893,17 @@ class MoonScribe(QMainWindow):
         self._add_action(file_menu, "E&xit", QKeySequence.StandardKey.Quit, self.close)
 
         edit_menu = self.menuBar().addMenu("&Edit")
-        self._add_action(edit_menu, "&Undo", QKeySequence.StandardKey.Undo, self.editor.undo)
-        self._add_action(edit_menu, "&Redo", QKeySequence.StandardKey.Redo, self.editor.redo)
+        # These must act on the CURRENT tab, so route through the self.editor
+        # property at trigger time — binding self.editor.undo directly here
+        # would freeze them to whichever tab happened to be open at startup.
+        self._add_action(edit_menu, "&Undo", QKeySequence.StandardKey.Undo, lambda: self.editor.undo())
+        self._add_action(edit_menu, "&Redo", QKeySequence.StandardKey.Redo, lambda: self.editor.redo())
         edit_menu.addSeparator()
-        self._add_action(edit_menu, "Cu&t", QKeySequence.StandardKey.Cut, self.editor.cut)
-        self._add_action(edit_menu, "&Copy", QKeySequence.StandardKey.Copy, self.editor.copy)
-        self._add_action(edit_menu, "&Paste", QKeySequence.StandardKey.Paste, self.editor.paste)
+        self._add_action(edit_menu, "Cu&t", QKeySequence.StandardKey.Cut, lambda: self.editor.cut())
+        self._add_action(edit_menu, "&Copy", QKeySequence.StandardKey.Copy, lambda: self.editor.copy())
+        self._add_action(edit_menu, "&Paste", QKeySequence.StandardKey.Paste, lambda: self.editor.paste())
         edit_menu.addSeparator()
-        self._add_action(edit_menu, "Select &All", QKeySequence.StandardKey.SelectAll, self.editor.selectAll)
+        self._add_action(edit_menu, "Select &All", QKeySequence.StandardKey.SelectAll, lambda: self.editor.selectAll())
         edit_menu.addSeparator()
         wrap_action = QAction("&Word Wrap", self, checkable=True)
         wrap_action.setChecked(True)
@@ -1623,14 +1633,6 @@ class MoonScribe(QMainWindow):
 
         painter.end()
         return pixmap
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        # Lock a minimum width that fits the whole formatting toolbar, so its
-        # controls never collapse into a ">>" overflow menu.
-        if not self._sized:
-            self._sized = True
-            self.setMinimumWidth(max(760, self._format_toolbar.sizeHint().width() + 12))
 
     def _apply_editor_appearance(self, theme):
         """Apply the theme's editor colours/background to every open tab."""
