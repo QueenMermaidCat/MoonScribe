@@ -1,0 +1,12 @@
+# PyInstaller build artifacts (regenerated on every build; large)
+build/
+dist/
+*.spec
+
+# Python caches
+__pycache__/
+*.pyc
+
+# Editor/OS cruft
+*.tmp
+Thumbs.db
