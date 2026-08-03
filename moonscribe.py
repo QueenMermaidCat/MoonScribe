@@ -1,5 +1,5 @@
 """
-MoonScribe — a single-window rich text editor for calm creative writing.
+MoonScribe — a calm rich text editor for notes, with session-only tabs.
 
 Build progress (see MOONSCRIBE_SPEC.md):
   [x] Step 1: Main window + editor
@@ -87,6 +87,7 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QStyledItemDelegate,
+    QTabBar,
     QTabWidget,
     QTextEdit,
     QToolBar,
@@ -590,8 +591,9 @@ class MoonScribe(QMainWindow):
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
         self.tabs.setMovable(True)
-        self.tabs.setTabsClosable(True)
-        self.tabs.tabCloseRequested.connect(self._close_tab)
+        # We supply our own themed close (×) button per tab instead of the
+        # style's default light-grey box, so leave tabsClosable off here.
+        self.tabs.setTabsClosable(False)
         self.tabs.currentChanged.connect(self._on_tab_changed)
         self.setCentralWidget(self.tabs)
 
@@ -734,11 +736,51 @@ class MoonScribe(QMainWindow):
         """Create a fresh blank tab and (by default) switch to it."""
         editor = self._new_editor()
         index = self.tabs.addTab(editor, "Untitled")
+        self._install_close_button(editor, index)
         self._apply_editor_appearance_one(editor, THEMES[self._current_theme])
         if make_current:
             self.tabs.setCurrentIndex(index)
         self._update_tabbar_visibility()
         return editor
+
+    def _close_icon(self, color):
+        """A small, theme-coloured × drawn to match the tab text."""
+        size = 16
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(QColor(color))
+        pen.setWidthF(1.6)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        m = 4.5
+        painter.drawLine(QPointF(m, m), QPointF(size - m, size - m))
+        painter.drawLine(QPointF(size - m, m), QPointF(m, size - m))
+        painter.end()
+        return QIcon(pixmap)
+
+    def _install_close_button(self, editor, index):
+        """Give each tab our own × button so its colour follows the theme."""
+        button = QToolButton()
+        button.setObjectName("tabClose")
+        button.setAutoRaise(True)
+        button.setFixedSize(18, 18)
+        button.setIconSize(QSize(11, 11))
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setToolTip("Close tab")
+        button.setIcon(self._close_icon(THEMES[self._current_theme]["chrome_fg"]))
+        button.clicked.connect(
+            lambda _=False, e=editor: self._close_tab(self.tabs.indexOf(e))
+        )
+        editor._close_btn = button
+        self.tabs.tabBar().setTabButton(index, QTabBar.ButtonPosition.RightSide, button)
+
+    def _refresh_close_buttons(self, color):
+        for editor in self._all_editors():
+            button = getattr(editor, "_close_btn", None)
+            if button is not None:
+                button.setIcon(self._close_icon(color))
 
     def _update_tabbar_visibility(self):
         """Keep the minimal look: the tab strip only appears with 2+ notes."""
@@ -934,7 +976,8 @@ class MoonScribe(QMainWindow):
         html = (
             "<div style=\"font-family:'Segoe UI';\">"
             "<p>MoonScribe — a calm space for your thoughts.</p>"
-            "<p>A single-window rich text editor for notes and note-taking.</p>"
+            "<p>A calm rich-text editor for notes and note-taking — keep "
+            "several open at once as tabs.</p>"
             "<p><b>Autosave &amp; recovery:</b><br>"
             "While you have unsaved changes, MoonScribe quietly saves a backup "
             "every 60 seconds, so an unexpected shutdown won't lose your work. "
@@ -1707,13 +1750,14 @@ class MoonScribe(QMainWindow):
             QTabBar::tab {{ background: {theme['surface']}; color: {theme['muted']}; border: 1px solid {panel_line}; border-bottom: none; border-top-left-radius: 8px; border-top-right-radius: 8px; padding: 5px 14px; margin: 3px 2px 0 0; }}
             QTabBar::tab:selected {{ background: {theme['button_hover']}; color: {theme['chrome_fg']}; }}
             QTabBar::tab:hover {{ background: {theme['button_hover']}; }}
-            QTabBar::close-button {{ subcontrol-position: right; }}
-            QTabBar::close-button:hover {{ background: {theme['accent']}; border-radius: 4px; }}
+            QToolButton#tabClose {{ border: none; background: transparent; border-radius: 5px; margin-left: 2px; }}
+            QToolButton#tabClose:hover {{ background: {theme['button_hover']}; }}
             """
         )
 
         self._apply_editor_appearance(theme)
         self._refresh_icons(theme["chrome_fg"])
+        self._refresh_close_buttons(theme["chrome_fg"])
 
         # Keep the toolbar dropdown and Format-menu radio in sync with the choice.
         self.theme_combo.blockSignals(True)
