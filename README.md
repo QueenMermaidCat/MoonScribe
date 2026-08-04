@@ -24,7 +24,8 @@ big company); click **More info → Run anyway** to continue.
 
 ## ✨ Features
 
-- **Three calm themes** — MoonScribe Dark, Light Mode, and a starry Cosmic mode.
+- **Four calm themes** — MoonScribe Dark, Light Mode, a starry Cosmic mode, and a
+  dreamy Pastel Moon.
 - **Tabs** — keep several notes open at once. They stay only for the current
   session, so every launch opens fresh and uncluttered.
 - **Gentle rich text** — bold, italic, underline, strikethrough, alignment,

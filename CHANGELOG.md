@@ -4,6 +4,14 @@ All notable changes to MoonScribe are recorded here. 🌙
 
 The newest version is always at the top.
 
+## v1.2.0 — 2026-08-04
+
+### Added
+- **New theme: Pastel Moon** 🌸 — a soft pink and lavender theme with gently
+  double-outlined panels floating on a dreamy gradient sky full of tiny stars.
+  The writing area stays calm and near-white. Pick it from the Theme menu or the
+  toolbar's theme dropdown.
+
 ## v1.1.0 — 2026-08-04
 
 ### Added

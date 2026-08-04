@@ -133,7 +133,7 @@ ICON_PNG = resource_path("MoonScribe-Icon.png")
 # quietly asks GitHub's public API for the latest release and, if it's newer,
 # shows a gentle in-app notice pointing at the releases page.  Bump APP_VERSION
 # on every release so older copies out in the wild know they're behind.
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 GITHUB_REPO = "QueenMermaidCat/MoonScribe"
 LATEST_RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 RELEASES_PAGE = f"https://github.com/{GITHUB_REPO}/releases/latest"
