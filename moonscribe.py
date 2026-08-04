@@ -16,6 +16,7 @@ import base64
 import json
 import math
 import os
+import random
 import re
 import sys
 import tempfile
@@ -345,6 +346,36 @@ THEMES = {
         "glyph_fg": "#c9c0e4",   # pale lavender glyphs
         "glyph_fg_hover": "#ffffff",
         "cosmic": True,
+    },
+    "Pastel Moon": {
+        "chrome_top": "#FFF8FD",
+        "chrome_bottom": "#F6E2F8",
+        "chrome_fg": "#5B185C",       # readable plum on the pale panels
+        "muted": "#9A5B98",
+        "editor_bg": "#FFFEFF",
+        "editor_fg": "#5B185C",
+        "placeholder": "#D779B4",
+        "button_hover": "#F7DDF1",
+        "accent": "#F0A6D6",          # soft pastel pink for active/selected states
+        "sel_bg": "#F2C9E8",
+        "sel_fg": "#5B185C",
+        "scrollbar": "#E6B4DD",
+        "scrollbar_hover": "#CE7FBE",
+        "surface": "#FCEFFC",         # emoji/glyph strips, inactive tabs
+        "border": "#EDC5E6",
+        "glyph_fg": "#C84C9A",        # rich rose-pink glyphs
+        "glyph_fg_hover": "#9F4CC6",
+        "cosmic": False,
+        # Pastel-Moon extras (ignored by the other themes):
+        "panel_cards": True,          # double-outlined, gapped panel "cards"
+        "panel_line": "#DCA7D6",      # soft orchid panel outline
+        "window_base": "#EFD9F2",     # fallback behind the painted backdrop
+        "starfield": True,            # paint a gradient + star backdrop
+        "window_gradient": [          # horizontal sky behind the panels
+            (0.0, "#FBEDF6"),
+            (0.55, "#F0A8DF"),
+            (1.0, "#C6A6E8"),
+        ],
     },
 }
 
@@ -683,6 +714,10 @@ class MoonScribe(QMainWindow):
         self._current_theme = saved_theme if saved_theme in THEMES else DEFAULT_THEME
         self._canvas_size = None  # last size the cosmic scene was painted at
         self._cosmic_art = QPixmap(COSMIC_ART)  # null if the file is missing
+        # Cached painted window backdrop (gradient + starfield) for themes that
+        # use one; regenerated when the window size or theme changes.
+        self._bg_pixmap = None
+        self._bg_size = None
 
         # Spellchecker: a red wavy underline overlay plus right-click suggestions.
         self._spell = SpellChecker() if SpellChecker is not None else None
@@ -1695,6 +1730,77 @@ class MoonScribe(QMainWindow):
         painter.end()
         return pixmap
 
+    # ---- Painted window backdrop (gradient + starfield) --------------------
+    def paintEvent(self, event):
+        """Paint the themed backdrop behind the panels, if the theme has one.
+
+        The opaque panels sit on top, so this reads only through the gaps and
+        margins — a soft pastel sky the panel "cards" float on. Non-backdrop
+        themes fall through to the normal stylesheet background.
+        """
+        theme = THEMES[self._current_theme]
+        if theme.get("starfield"):
+            width, height = self.width(), self.height()
+            if self._bg_size != (width, height) or self._bg_pixmap is None:
+                self._bg_pixmap = self._paint_window_backdrop(theme, width, height)
+                self._bg_size = (width, height)
+            painter = QPainter(self)
+            painter.drawPixmap(0, 0, self._bg_pixmap)
+            painter.end()
+        else:
+            super().paintEvent(event)
+
+    def _paint_window_backdrop(self, theme, width, height):
+        """Render the horizontal gradient + a dense, size-varied starfield.
+
+        A fixed seed keeps the pattern stable across repaints; a coarse cell
+        grid enforces spacing (so no two stars touch) in O(1) per star. Star
+        count scales with the window area, so the density holds at any size.
+        Density thins slightly toward the pale left and gathers toward the
+        lavender right, with a few larger, brighter sparkles mixed in.
+        """
+        pixmap = QPixmap(max(1, width), max(1, height))
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        gradient = QLinearGradient(0, 0, width, 0)
+        for stop, color in theme["window_gradient"]:
+            gradient.setColorAt(stop, QColor(color))
+        painter.fillRect(0, 0, width, height, QBrush(gradient))
+
+        rng = random.Random(20260804)  # deterministic field
+        cell = 7
+        occupied = set()
+        target = int(width * height / 750)
+        painter.setPen(Qt.PenStyle.NoPen)
+        placed = attempts = 0
+        while placed < target and attempts < target * 6:
+            attempts += 1
+            x = rng.random() * width
+            y = rng.random() * height
+            if rng.random() > 0.5 + 0.5 * (x / width):  # denser toward the right
+                continue
+            key = (int(x // cell), int(y // cell))
+            if key in occupied:  # keeps them from touching
+                continue
+            occupied.add(key)
+            bucket = rng.random()
+            if bucket < 0.78:
+                radius = 0.6 + rng.random() * 1.2
+            elif bucket < 0.95:
+                radius = 1.9 + rng.random() * 1.4
+            else:
+                radius = 3.4 + rng.random() * 1.9
+            opacity = (0.55 + 0.45 * (x / width)) * (0.7 + rng.random() * 0.3)
+            color = QColor(255, 255, 255)
+            color.setAlphaF(min(1.0, opacity))
+            painter.setBrush(QBrush(color))
+            painter.drawEllipse(QPointF(x, y), radius, radius)
+            placed += 1
+
+        painter.end()
+        return pixmap
+
     def _apply_editor_appearance(self, theme):
         """Apply the theme's editor colours/background to every open tab."""
         for editor in self._all_editors():
@@ -1753,6 +1859,17 @@ class MoonScribe(QMainWindow):
             bar_margin = "margin: 3px 5px;"
             window_bg = "#020310"
             divider_col = "#4b3a7d"
+        elif theme.get("panel_cards"):
+            # Pastel-Moon style: pale carded panels with a double outline and
+            # small gaps, floating on a painted gradient + starfield backdrop.
+            chrome_fill = f"background: {chrome_bg};"
+            emoji_fill = f"background-color: {theme['surface']};"
+            combo_fill = f"background-color: {theme['surface']};"
+            panel_line = theme["panel_line"]
+            bar_edge = f"border: 3px double {panel_line}; border-radius: 10px;"
+            bar_margin = "margin: 4px 6px;"
+            window_bg = theme.get("window_base", theme["chrome_bottom"])
+            divider_col = theme["muted"]
         else:
             chrome_fill = f"background: {chrome_bg};"
             emoji_fill = f"background-color: {theme['surface']};"
@@ -1762,6 +1879,15 @@ class MoonScribe(QMainWindow):
             bar_margin = ""
             window_bg = theme["chrome_bottom"]
             divider_col = theme["muted"]
+
+        # Carded panels frame the emoji/glyph strips with their own double line,
+        # so drop the strips' inner hairline there; give the editor a matching
+        # framed border too.
+        strip_edge = "none" if theme.get("panel_cards") else f"1px solid {panel_line}"
+        editor_rule = (
+            f"QTextEdit {{ border: 3px double {panel_line}; border-radius: 10px; }}"
+            if theme.get("panel_cards") else ""
+        )
 
         caret_path = caret_icon(theme["chrome_fg"])
 
@@ -1782,10 +1908,10 @@ class MoonScribe(QMainWindow):
             QStatusBar::item {{ border: none; }}
             QStatusBar QLabel {{ background: transparent; color: {theme['chrome_fg']}; }}
             QLabel#countLabel {{ color: {theme['muted']}; padding-right: 8px; }}
-            #emojiStrip {{ {emoji_fill} border: 1px solid {panel_line}; border-radius: 10px; }}
+            #emojiStrip {{ {emoji_fill} border: {strip_edge}; border-radius: 10px; }}
             #emojiFull {{ {emoji_fill} border: none; }}
             #emojiDivider {{ background: {divider_col}; margin: 8px 2px; border: none; }}
-            #glyphStrip {{ {emoji_fill} border: 1px solid {panel_line}; border-radius: 10px; }}
+            #glyphStrip {{ {emoji_fill} border: {strip_edge}; border-radius: 10px; }}
             #glyphFull {{ {emoji_fill} border: none; }}
             #glyphFull QToolButton {{ color: {theme['glyph_fg']}; }}
             #glyphFull QToolButton:hover {{ color: {theme['glyph_fg_hover']}; background: {theme['button_hover']}; }}
@@ -1821,6 +1947,7 @@ class MoonScribe(QMainWindow):
             QPushButton#updateDownload:hover {{ background: {theme['sel_bg']}; }}
             QPushButton#updateDismiss {{ background: transparent; color: {theme['muted']}; border: none; border-radius: 6px; padding: 5px 12px; }}
             QPushButton#updateDismiss:hover {{ background: {theme['button_hover']}; color: {theme['chrome_fg']}; }}
+            {editor_rule}
             """
         )
 
@@ -1836,6 +1963,11 @@ class MoonScribe(QMainWindow):
             self.theme_actions[name].setChecked(True)
 
         self._settings.setValue("theme", name)
+
+        # The painted starfield backdrop (if any) is size-specific; drop the
+        # cache and repaint so the new theme's backdrop shows immediately.
+        self._bg_size = None
+        self.update()
 
     # ---- Update notice -----------------------------------------------------
     def _make_update_bar(self):
