@@ -13,6 +13,7 @@ Build progress (see MOONSCRIBE_SPEC.md):
 """
 
 import base64
+import json
 import math
 import os
 import re
@@ -43,6 +44,7 @@ from PyQt6.QtCore import (
     QStandardPaths,
     Qt,
     QTimer,
+    QUrl,
     pyqtSignal,
 )
 from PyQt6.QtGui import (
@@ -50,6 +52,7 @@ from PyQt6.QtGui import (
     QActionGroup,
     QBrush,
     QColor,
+    QDesktopServices,
     QFont,
     QFontDatabase,
     QFontMetricsF,
@@ -84,6 +87,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMessageBox,
+    QPushButton,
     QScrollArea,
     QSizePolicy,
     QStyledItemDelegate,
@@ -92,7 +96,13 @@ from PyQt6.QtWidgets import (
     QTextEdit,
     QToolBar,
     QToolButton,
+    QVBoxLayout,
     QWidget,
+)
+from PyQt6.QtNetwork import (
+    QNetworkAccessManager,
+    QNetworkReply,
+    QNetworkRequest,
 )
 
 try:
@@ -117,6 +127,39 @@ COSMIC_ART = resource_path("MoonscribeTextbox.png")
 
 # App / taskbar icon (the crescent-moon artwork), shipped alongside the script.
 ICON_PNG = resource_path("MoonScribe-Icon.png")
+
+# This build's version, and where to look for newer ones.  On launch the app
+# quietly asks GitHub's public API for the latest release and, if it's newer,
+# shows a gentle in-app notice pointing at the releases page.  Bump APP_VERSION
+# on every release so older copies out in the wild know they're behind.
+APP_VERSION = "1.1.0"
+GITHUB_REPO = "QueenMermaidCat/MoonScribe"
+LATEST_RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+RELEASES_PAGE = f"https://github.com/{GITHUB_REPO}/releases/latest"
+
+
+def parse_version(text):
+    """Turn a tag like 'v1.2.3' into a comparable tuple (1, 2, 3).
+
+    Returns None when there's nothing numeric to compare, and stops at the first
+    non-numeric piece (so '1.2.0-beta' reads as (1, 2, 0)).  Kept deliberately
+    forgiving: a weird tag simply means "don't claim there's an update".
+    """
+    if not text:
+        return None
+    cleaned = str(text).strip().lstrip("vV").strip()
+    numbers = []
+    for piece in cleaned.split("."):
+        digits = ""
+        for ch in piece:
+            if ch.isdigit():
+                digits += ch
+            else:
+                break
+        if not digits:
+            break
+        numbers.append(int(digits))
+    return tuple(numbers) if numbers else None
 
 # Markers wrapping the theme CSS baked into saved .html, so a note opens outside
 # MoonScribe looking like its theme.  file_open() strips this block so re-opening
@@ -603,7 +646,18 @@ class MoonScribe(QMainWindow):
         # style's default light-grey box, so leave tabsClosable off here.
         self.tabs.setTabsClosable(False)
         self.tabs.currentChanged.connect(self._on_tab_changed)
-        self.setCentralWidget(self.tabs)
+
+        # A slim "update available" notice lives just above the editor, tucked
+        # under the toolbars.  It stays hidden unless the launch-time check finds
+        # a newer release, so the calm layout is untouched the rest of the time.
+        self._update_bar = self._make_update_bar()
+        central = QWidget()
+        central_layout = QVBoxLayout(central)
+        central_layout.setContentsMargins(0, 0, 0, 0)
+        central_layout.setSpacing(0)
+        central_layout.addWidget(self._update_bar)
+        central_layout.addWidget(self.tabs)
+        self.setCentralWidget(central)
 
         # Persisted font preferences (favorites + recently used).
         self.RECENT_MAX = 10
@@ -668,6 +722,9 @@ class MoonScribe(QMainWindow):
         self._autosave_timer.start()
         # Offer to restore a leftover recovery file once the window is up.
         QTimer.singleShot(0, self._maybe_recover)
+        # A moment later, quietly check GitHub for a newer release.  Fully silent
+        # if offline or if we're already current — it never blocks or nags.
+        QTimer.singleShot(1500, self._check_for_update)
 
     # ---- Tabs (session-only) ----------------------------------------------
     # The whole app is written against `self.editor`; making it a property that
@@ -989,8 +1046,9 @@ class MoonScribe(QMainWindow):
         html = (
             "<div style=\"font-family:'Segoe UI';\">"
             "<p>MoonScribe — a calm space for your thoughts.</p>"
-            "<p>A calm rich-text editor for notes and note-taking — keep "
-            "several open at once as tabs.</p>"
+            "<p>A modern rich-text editor built for notes, journals, "
+            "stories, and everyday writing.</p>"
+            f"<p style=\"color:#8a8a98;\">Version {APP_VERSION}</p>"
             "<p><b>Autosave &amp; recovery:</b><br>"
             "While you have unsaved changes, MoonScribe quietly saves a backup "
             "every 60 seconds, so an unexpected shutdown won't lose your work. "
@@ -1757,6 +1815,12 @@ class MoonScribe(QMainWindow):
             QTabBar::tab:hover {{ background: {theme['button_hover']}; }}
             QToolButton#tabClose {{ border: none; background: transparent; border-radius: 5px; margin-left: 2px; }}
             QToolButton#tabClose:hover {{ background: {theme['button_hover']}; }}
+            QFrame#updateBar {{ background: {theme['surface']}; border: 1px solid {theme['accent']}; border-radius: 8px; margin: 3px 5px 5px 5px; }}
+            QLabel#updateText {{ background: transparent; color: {theme['chrome_fg']}; }}
+            QPushButton#updateDownload {{ background: {theme['accent']}; color: #ffffff; border: none; border-radius: 6px; padding: 5px 16px; }}
+            QPushButton#updateDownload:hover {{ background: {theme['sel_bg']}; }}
+            QPushButton#updateDismiss {{ background: transparent; color: {theme['muted']}; border: none; border-radius: 6px; padding: 5px 12px; }}
+            QPushButton#updateDismiss:hover {{ background: {theme['button_hover']}; color: {theme['chrome_fg']}; }}
             """
         )
 
@@ -1772,6 +1836,91 @@ class MoonScribe(QMainWindow):
             self.theme_actions[name].setChecked(True)
 
         self._settings.setValue("theme", name)
+
+    # ---- Update notice -----------------------------------------------------
+    def _make_update_bar(self):
+        """Build the hidden 'update available' strip shown under the toolbars."""
+        bar = QFrame()
+        bar.setObjectName("updateBar")
+        bar.hide()  # only revealed if a newer release is found
+        layout = QHBoxLayout(bar)
+        layout.setContentsMargins(12, 6, 8, 6)
+        layout.setSpacing(10)
+
+        self._update_label = QLabel("A new version of MoonScribe is available.")
+        self._update_label.setObjectName("updateText")
+
+        download = QPushButton("Download")
+        download.setObjectName("updateDownload")
+        download.setCursor(Qt.CursorShape.PointingHandCursor)
+        download.clicked.connect(self._open_releases_page)
+
+        dismiss = QPushButton("Dismiss")
+        dismiss.setObjectName("updateDismiss")
+        dismiss.setCursor(Qt.CursorShape.PointingHandCursor)
+        dismiss.clicked.connect(self._dismiss_update)
+
+        layout.addWidget(self._update_label)
+        layout.addStretch(1)
+        layout.addWidget(download)
+        layout.addWidget(dismiss)
+        return bar
+
+    def _check_for_update(self):
+        """Ask GitHub for the latest release, off the main thread's critical path.
+
+        Everything here is wrapped so a failure (offline, DNS, TLS, bad JSON)
+        stays completely invisible — the app carries on as if nothing happened.
+        """
+        try:
+            self._net = QNetworkAccessManager(self)
+            request = QNetworkRequest(QUrl(LATEST_RELEASE_API))
+            # GitHub's API requires a User-Agent; Accept pins the API version.
+            request.setHeader(
+                QNetworkRequest.KnownHeaders.UserAgentHeader,
+                f"MoonScribe/{APP_VERSION}",
+            )
+            request.setRawHeader(b"Accept", b"application/vnd.github+json")
+            reply = self._net.get(request)
+            reply.finished.connect(lambda: self._on_update_reply(reply))
+        except Exception:
+            pass  # never let the update check disturb the app
+
+    def _on_update_reply(self, reply):
+        try:
+            if reply.error() != QNetworkReply.NetworkError.NoError:
+                return
+            raw = bytes(reply.readAll()).decode("utf-8", "replace")
+            tag = str(json.loads(raw).get("tag_name", "")).strip()
+            latest = parse_version(tag)
+            current = parse_version(APP_VERSION)
+            if latest is None or current is None or latest <= current:
+                return  # up to date, or the tag was unreadable — say nothing
+            dismissed = self._settings.value("updates/dismissed_version", "") or ""
+            if tag == dismissed:
+                return  # the user already waved this exact version away
+            self._latest_tag = tag
+            self._update_label.setText(
+                f"🌙  MoonScribe {tag.lstrip('vV')} is available "
+                f"— you have {APP_VERSION}."
+            )
+            self._update_bar.show()
+        except Exception:
+            pass  # any parsing hiccup: stay quiet
+        finally:
+            reply.deleteLater()
+
+    def _open_releases_page(self):
+        # Opens the releases page in the user's browser; the app never downloads
+        # or installs anything itself — the person stays fully in control.
+        QDesktopServices.openUrl(QUrl(RELEASES_PAGE))
+
+    def _dismiss_update(self):
+        # Remember this version so it won't nag again; a newer one still will.
+        tag = getattr(self, "_latest_tag", "")
+        if tag:
+            self._settings.setValue("updates/dismissed_version", tag)
+        self._update_bar.hide()
 
     # ---- File actions ------------------------------------------------------
     def file_new(self):

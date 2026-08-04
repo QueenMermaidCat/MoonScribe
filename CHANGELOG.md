@@ -4,6 +4,20 @@ All notable changes to MoonScribe are recorded here. 🌙
 
 The newest version is always at the top.
 
+## v1.1.0 — 2026-08-04
+
+### Added
+- **Gentle update notice** — on launch, MoonScribe quietly checks for a newer
+  version and, if one exists, shows a soft dismissible bar under the toolbar
+  with a link to download it. It never installs anything itself, stays
+  completely silent when you're up to date or offline, and won't nag again once
+  dismissed.
+- The **About** box now shows the app version.
+
+### Changed
+- Refreshed the **About** box description: "A modern rich-text editor built for
+  notes, journals, stories, and everyday writing."
+
 ## v1.0.1 — 2026-08-03
 
 ### Fixed
