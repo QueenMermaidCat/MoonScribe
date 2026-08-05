@@ -4,6 +4,14 @@ All notable changes to MoonScribe are recorded here. 🌙
 
 The newest version is always at the top.
 
+## v1.2.1 — 2026-08-04
+
+### Changed
+- **Pastel Moon** now shows its dreamy starry sky in the writing area too, so the
+  whole window shares one soft, twinkling background. It's painted intentionally,
+  so it looks the same on every computer (before, the editor could appear plain
+  white or starry depending on the machine).
+
 ## v1.2.0 — 2026-08-04
 
 ### Added

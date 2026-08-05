@@ -133,7 +133,7 @@ ICON_PNG = resource_path("MoonScribe-Icon.png")
 # quietly asks GitHub's public API for the latest release and, if it's newer,
 # shows a gentle in-app notice pointing at the releases page.  Bump APP_VERSION
 # on every release so older copies out in the wild know they're behind.
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.2.1"
 GITHUB_REPO = "QueenMermaidCat/MoonScribe"
 LATEST_RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 RELEASES_PAGE = f"https://github.com/{GITHUB_REPO}/releases/latest"
@@ -908,6 +908,9 @@ class MoonScribe(QMainWindow):
         if THEMES[self._current_theme]["cosmic"]:
             editor._canvas_size = None
             self._refresh_cosmic_canvas(editor, force=True)
+        elif THEMES[self._current_theme].get("starfield"):
+            editor._canvas_size = None
+            self._refresh_editor_starfield(editor, force=True)
         editor.setFocus()
 
     def _on_modified_changed(self, editor):
@@ -1652,11 +1655,39 @@ class MoonScribe(QMainWindow):
 
     # ---- Cosmic editor scene ----------------------------------------------
     def eventFilter(self, obj, event):
-        if event.type() == QEvent.Type.Resize and THEMES[self._current_theme]["cosmic"]:
+        if event.type() == QEvent.Type.Resize:
+            theme = THEMES[self._current_theme]
             editor = self.editor
             if editor is not None and obj is editor.viewport():
-                self._refresh_cosmic_canvas(editor)
+                if theme["cosmic"]:
+                    self._refresh_cosmic_canvas(editor)
+                elif theme.get("starfield"):
+                    self._refresh_editor_starfield(editor)
         return super().eventFilter(obj, event)
+
+    def _refresh_editor_starfield(self, editor=None, force=False):
+        """Paint the gradient + starfield onto an editor's background.
+
+        Pastel Moon's writing area shows the same starry sky as the panels. We
+        paint it straight onto the editor's Base brush (the reliable technique
+        Cosmic uses for its nebula), so it looks identical on every machine
+        instead of depending on the editor happening to be see-through."""
+        editor = editor or self.editor
+        if editor is None:
+            return
+        viewport = editor.viewport()
+        width, height = viewport.width(), viewport.height()
+        if width <= 0 or height <= 0:
+            return
+        if not force and getattr(editor, "_canvas_size", None) == (width, height):
+            return
+        editor._canvas_size = (width, height)
+
+        scene = self._paint_window_backdrop(THEMES[self._current_theme], width, height)
+        palette = viewport.palette()
+        palette.setBrush(QPalette.ColorRole.Base, QBrush(scene))
+        viewport.setPalette(palette)
+        viewport.update()
 
     def _refresh_cosmic_canvas(self, editor=None, force=False):
         """Repaint the nebula scene to fit the given editor's viewport exactly.
@@ -1819,6 +1850,9 @@ class MoonScribe(QMainWindow):
         if theme["cosmic"]:
             editor._canvas_size = None  # force a repaint at the current size
             self._refresh_cosmic_canvas(editor, force=True)
+        elif theme.get("starfield"):
+            editor._canvas_size = None  # force a repaint at the current size
+            self._refresh_editor_starfield(editor, force=True)
         else:
             viewport = editor.viewport()
             vpal = viewport.palette()
@@ -1881,13 +1915,8 @@ class MoonScribe(QMainWindow):
             divider_col = theme["muted"]
 
         # Carded panels frame the emoji/glyph strips with their own double line,
-        # so drop the strips' inner hairline there; give the editor a matching
-        # framed border too.
+        # so drop the strips' inner hairline there.
         strip_edge = "none" if theme.get("panel_cards") else f"1px solid {panel_line}"
-        editor_rule = (
-            f"QTextEdit {{ border: 3px double {panel_line}; border-radius: 10px; }}"
-            if theme.get("panel_cards") else ""
-        )
 
         caret_path = caret_icon(theme["chrome_fg"])
 
@@ -1947,7 +1976,6 @@ class MoonScribe(QMainWindow):
             QPushButton#updateDownload:hover {{ background: {theme['sel_bg']}; }}
             QPushButton#updateDismiss {{ background: transparent; color: {theme['muted']}; border: none; border-radius: 6px; padding: 5px 12px; }}
             QPushButton#updateDismiss:hover {{ background: {theme['button_hover']}; color: {theme['chrome_fg']}; }}
-            {editor_rule}
             """
         )
 
