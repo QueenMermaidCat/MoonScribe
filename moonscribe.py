@@ -87,6 +87,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
     QScrollArea,
@@ -99,6 +100,7 @@ from PyQt6.QtWidgets import (
     QToolButton,
     QVBoxLayout,
     QWidget,
+    QWidgetAction,
 )
 from PyQt6.QtNetwork import (
     QNetworkAccessManager,
@@ -378,6 +380,17 @@ THEMES = {
         ],
     },
 }
+
+
+# Swatches shown in the colour buttons' dropdown palette (6 per row).
+COLOR_PALETTE = [
+    "#000000", "#444444", "#888888", "#BBBBBB", "#EEEEEE", "#FFFFFF",
+    "#E53935", "#F4511E", "#FB8C00", "#FDD835", "#C0CA33", "#7CB342",
+    "#43A047", "#00897B", "#00ACC1", "#1E88E5", "#3949AB", "#8E24AA",
+    "#A64D79", "#D81B60", "#EC407A", "#F48FB1", "#B39DDB", "#80CBC4",
+    "#B71C1C", "#E65100", "#33691E", "#004D40", "#1A237E", "#4A148C",
+    "#FFCDD2", "#FFE0B2", "#DCEDC8", "#B2EBF2", "#C5CAE9", "#E1BEE7",
+]
 
 
 class HorizontalScrollArea(QScrollArea):
@@ -1211,20 +1224,17 @@ class MoonScribe(QMainWindow):
             toolbar.addWidget(button)
         toolbar.addSeparator()
 
-        color_font = QFont(); color_font.setPointSize(14)
-        # Left-click re-applies the last-used colour (no dialog); right-click
-        # opens the picker to choose a new one.
-        self.text_color_btn = self._tool_button("Text color", self._apply_text_color, text="A", font=color_font)
-        self.highlight_btn = self._tool_button(
-            "Highlight color", self._apply_highlight_color, text="\N{LOWER LEFT PENCIL}", font=color_font
+        # Colour buttons: the main button re-applies your last colour instantly;
+        # the little ▾ opens the picker to choose a new one. A swatch bar under
+        # the glyph shows the colour that's currently loaded.
+        self.text_color_btn = self._make_color_button(
+            "A", "Text color", self._apply_text_color,
+            self._set_text_color, self._choose_text_color,
         )
-        for btn, chooser, label in (
-            (self.text_color_btn, self._choose_text_color, "Text color"),
-            (self.highlight_btn, self._choose_highlight_color, "Highlight color"),
-        ):
-            btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-            btn.customContextMenuRequested.connect(lambda _pos, c=chooser: c())
-            btn.setToolTip(f"{label} — click to re-apply, right-click to choose")
+        self.highlight_btn = self._make_color_button(
+            "\N{LOWER LEFT PENCIL}", "Highlight color", self._apply_highlight_color,
+            self._set_highlight_color, self._choose_highlight_color,
+        )
         toolbar.addWidget(self.text_color_btn)
         toolbar.addWidget(self.highlight_btn)
 
@@ -1480,11 +1490,92 @@ class MoonScribe(QMainWindow):
             if self.editor.document().isEmpty():
                 self.editor.document().setDefaultFont(self._base_font)
 
+    def _make_color_button(self, glyph, label, on_click, on_set, on_choose):
+        """A colour button: main click re-applies the last colour; the ▾ opens a
+        palette of swatches (plus "More…" for the full picker). A swatch bar
+        under the glyph shows the loaded colour."""
+        btn = QToolButton()
+        btn.setAutoRaise(True)
+        btn.setFixedSize(48, 34)
+        btn.setIconSize(QSize(22, 22))
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        btn.setToolTip(f"{label} — click to re-apply; use the ▾ for the palette")
+
+        menu = QMenu(btn)
+        palette = QWidget()
+        grid = QGridLayout(palette)
+        grid.setContentsMargins(8, 8, 8, 6)
+        grid.setSpacing(4)
+        cols = 6
+        for i, hexc in enumerate(COLOR_PALETTE):
+            swatch = QToolButton()
+            swatch.setFixedSize(20, 20)
+            swatch.setToolTip(hexc)
+            swatch.setCursor(Qt.CursorShape.PointingHandCursor)
+            swatch.setStyleSheet(
+                f"QToolButton {{ background: {hexc};"
+                " border: 1px solid rgba(130,130,130,0.6); border-radius: 4px; }"
+                "QToolButton:hover { border: 2px solid #aaaaaa; }"
+            )
+            swatch.clicked.connect(
+                lambda _=False, c=hexc, m=menu: (on_set(QColor(c)), m.hide())
+            )
+            grid.addWidget(swatch, i // cols, i % cols)
+        swatches = QWidgetAction(menu)
+        swatches.setDefaultWidget(palette)
+        menu.addAction(swatches)
+        menu.addSeparator()
+        menu.addAction("More colours…").triggered.connect(lambda: on_choose())
+
+        btn.setMenu(menu)
+        btn.clicked.connect(on_click)
+        btn._glyph = glyph
+        btn._swatch_color = None
+        self._refresh_color_button(btn)
+        return btn
+
+    def _color_icon(self, glyph, fg, swatch):
+        """Paint the A / pencil glyph with a colour swatch bar beneath it."""
+        scale = 2
+        w = h = 22
+        pixmap = QPixmap(w * scale, h * scale)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        font = QFont()
+        font.setPixelSize(int(14 * scale))
+        painter.setFont(font)
+        painter.setPen(QColor(fg))
+        painter.drawText(
+            0, 0, w * scale, int((h - 4) * scale),
+            Qt.AlignmentFlag.AlignCenter, glyph,
+        )
+        bar = QRectF(3 * scale, (h - 5) * scale, (w - 6) * scale, 3 * scale)
+        if swatch:
+            painter.fillRect(bar, QColor(swatch))
+        else:
+            faint = QColor(fg); faint.setAlpha(70)
+            painter.fillRect(bar, faint)
+        painter.end()
+        return QIcon(pixmap)
+
+    def _refresh_color_button(self, btn):
+        fg = THEMES[self._current_theme]["chrome_fg"]
+        btn.setIcon(self._color_icon(btn._glyph, fg, btn._swatch_color))
+
+    def _set_text_color(self, color):
+        self._last_text_color = color
+        self.text_color_btn._swatch_color = color.name()
+        self._refresh_color_button(self.text_color_btn)
+        fmt = QTextCharFormat()
+        fmt.setForeground(color)
+        self._merge_format(fmt)
+
     def _apply_text_color(self):
-        # Left-click: re-apply the last colour instantly; if none chosen yet this
-        # session, fall back to opening the picker.
+        # Main click: re-apply the last colour, or (first time) open the palette.
         if self._last_text_color is None:
-            self._choose_text_color()
+            self.text_color_btn.showMenu()
         else:
             fmt = QTextCharFormat()
             fmt.setForeground(self._last_text_color)
@@ -1494,17 +1585,19 @@ class MoonScribe(QMainWindow):
         initial = self._last_text_color or QColor(Qt.GlobalColor.black)
         color = QColorDialog.getColor(initial, self, "Text color")
         if color.isValid():
-            self._last_text_color = color
-            self.text_color_btn.setToolTip(
-                f"Text color ({color.name()}) — click to re-apply, right-click to choose"
-            )
-            fmt = QTextCharFormat()
-            fmt.setForeground(color)
-            self._merge_format(fmt)
+            self._set_text_color(color)
+
+    def _set_highlight_color(self, color):
+        self._last_highlight_color = color
+        self.highlight_btn._swatch_color = color.name()
+        self._refresh_color_button(self.highlight_btn)
+        fmt = QTextCharFormat()
+        fmt.setBackground(color)
+        self._merge_format(fmt)
 
     def _apply_highlight_color(self):
         if self._last_highlight_color is None:
-            self._choose_highlight_color()
+            self.highlight_btn.showMenu()
         else:
             fmt = QTextCharFormat()
             fmt.setBackground(self._last_highlight_color)
@@ -1514,13 +1607,7 @@ class MoonScribe(QMainWindow):
         initial = self._last_highlight_color or QColor(Qt.GlobalColor.yellow)
         color = QColorDialog.getColor(initial, self, "Highlight color")
         if color.isValid():
-            self._last_highlight_color = color
-            self.highlight_btn.setToolTip(
-                f"Highlight color ({color.name()}) — click to re-apply, right-click to choose"
-            )
-            fmt = QTextCharFormat()
-            fmt.setBackground(color)
-            self._merge_format(fmt)
+            self._set_highlight_color(color)
 
     def _sync_toolbar(self, fmt):
         """Reflect the format under the cursor in the toolbar controls."""
@@ -1646,8 +1733,15 @@ class MoonScribe(QMainWindow):
 
         container = QWidget()
         container.setObjectName("glyphStrip")
-        container.setFixedHeight(92)  # two rows plus the horizontal scrollbar
-        row = QHBoxLayout(container)
+        outer = QVBoxLayout(container)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # The glyph rows live in a collapsible body; a gentle chevron handle
+        # below tucks them away and brings them back with one soft button.
+        body = QWidget()
+        body.setFixedHeight(92)  # two rows plus the horizontal scrollbar
+        row = QHBoxLayout(body)
         row.setContentsMargins(8, 5, 8, 5)
         row.setSpacing(0)
 
@@ -1672,14 +1766,77 @@ class MoonScribe(QMainWindow):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         row.addWidget(scroll, 1)
+        outer.addWidget(body)
+        self._glyph_body = body
+
+        # Soft double-chevron handle, centred at the bottom, to collapse/expand.
+        handle = QWidget()
+        handle.setObjectName("glyphHandle")
+        handle.setFixedHeight(16)
+        handle_row = QHBoxLayout(handle)
+        handle_row.setContentsMargins(0, 0, 0, 2)
+        handle_row.setSpacing(0)
+        self.glyph_chevron = QToolButton()
+        self.glyph_chevron.setObjectName("glyphChevron")
+        self.glyph_chevron.setAutoRaise(True)
+        self.glyph_chevron.setFixedSize(50, 14)
+        self.glyph_chevron.setIconSize(QSize(26, 12))
+        self.glyph_chevron.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.glyph_chevron.setToolTip("Hide glyph panel")
+        self.glyph_chevron.clicked.connect(self._toggle_glyph_panel)
+        handle_row.addStretch(1)
+        handle_row.addWidget(self.glyph_chevron)
+        handle_row.addStretch(1)
+        outer.addWidget(handle)
 
         glyph_toolbar.addWidget(container)
         self.glyph_toolbar = glyph_toolbar
 
-        # Format menu entry to show/hide the strip.
+        # Format menu entry to show/hide the whole strip (the chevron just
+        # collapses the rows, leaving the handle reachable).
         toggle = glyph_toolbar.toggleViewAction()
         toggle.setText("Show &Glyph Panel")
         self.format_menu.addAction(toggle)
+
+    def _toggle_glyph_panel(self):
+        """Collapse the glyph rows to just the handle, or bring them back."""
+        show = self._glyph_body.isHidden()
+        self._glyph_body.setVisible(show)
+        self.glyph_chevron.setToolTip("Hide glyph panel" if show else "Show glyph panel")
+        self._refresh_glyph_chevron()
+
+    def _refresh_glyph_chevron(self):
+        if not hasattr(self, "glyph_chevron"):
+            return
+        color = THEMES[self._current_theme]["chrome_fg"]
+        pointing_up = self._glyph_body.isHidden()  # up = "bring the panel back"
+        self.glyph_chevron.setIcon(self._chevron_icon(color, pointing_up))
+
+    def _chevron_icon(self, color, up):
+        """A soft double chevron (two stacked), pointing up or down."""
+        scale = 2
+        w, h = 26, 12
+        pixmap = QPixmap(w * scale, h * scale)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(QColor(color))
+        pen.setWidthF(1.5 * scale)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        cx = w * scale / 2
+        half = 5 * scale   # half-width of each chevron
+        dip = 3 * scale    # depth of the V
+        for top in (2 * scale, 6 * scale):  # two stacked chevrons
+            if up:
+                painter.drawLine(QPointF(cx - half, top + dip), QPointF(cx, top))
+                painter.drawLine(QPointF(cx, top), QPointF(cx + half, top + dip))
+            else:
+                painter.drawLine(QPointF(cx - half, top), QPointF(cx, top + dip))
+                painter.drawLine(QPointF(cx, top + dip), QPointF(cx + half, top))
+        painter.end()
+        return QIcon(pixmap)
 
     # ---- Status bar --------------------------------------------------------
     def _build_status_bar(self):
@@ -2024,10 +2181,16 @@ class MoonScribe(QMainWindow):
             #glyphFull {{ {emoji_fill} border: none; }}
             #glyphFull QToolButton {{ color: {theme['glyph_fg']}; }}
             #glyphFull QToolButton:hover {{ color: {theme['glyph_fg_hover']}; background: {theme['button_hover']}; }}
+            #glyphHandle {{ background: transparent; }}
+            QToolButton#glyphChevron {{ border: none; background: transparent; border-radius: 6px; }}
+            QToolButton#glyphChevron:hover {{ background: {theme['button_hover']}; }}
             QScrollArea {{ background: transparent; border: none; }}
             QToolButton {{ background: transparent; color: {theme['chrome_fg']}; border: none; border-radius: 8px; padding: 2px; }}
             QToolButton:hover {{ background: {theme['button_hover']}; }}
             QToolButton:checked {{ background: {theme['accent']}; }}
+            QToolButton::menu-button {{ border: none; background: transparent; width: 13px; border-radius: 6px; }}
+            QToolButton::menu-button:hover {{ background: {theme['button_hover']}; }}
+            QToolButton::menu-arrow {{ image: url({caret_path}); width: 9px; height: 6px; }}
             QToolButton#moonButton {{ border: 1px solid {panel_line}; border-radius: 19px; background: {theme['button_hover']}; }}
             QToolButton#moonButton:hover {{ background: {theme['accent']}; }}
             QComboBox {{ {combo_fill} color: {theme['chrome_fg']}; border: 1px solid {panel_line}; border-radius: 8px; padding: 4px 8px; }}
@@ -2062,6 +2225,10 @@ class MoonScribe(QMainWindow):
         self._apply_editor_appearance(theme)
         self._refresh_icons(theme["chrome_fg"])
         self._refresh_close_buttons(theme["chrome_fg"])
+        self._refresh_glyph_chevron()
+        if hasattr(self, "text_color_btn"):
+            self._refresh_color_button(self.text_color_btn)
+            self._refresh_color_button(self.highlight_btn)
 
         # Keep the toolbar dropdown and Format-menu radio in sync with the choice.
         self.theme_combo.blockSignals(True)

@@ -13,8 +13,11 @@ The newest version is always at the top.
 
 ### Added
 - **Formatting shortcuts** — Bold (Ctrl+B), Italic (Ctrl+I), Underline (Ctrl+U).
-- **One-click color re-apply** — left-click the **A** (text color) or highlight
-  button to instantly reuse your last color; right-click to pick a new one.
+- **Faster colors** — the text-color (**A**) and highlight buttons now show a
+  swatch of your current color; click to re-apply it instantly, or use the **▾**
+  for a palette of colors ("More colours…" is there for anything custom).
+- **Gentle glyph-panel toggle** — a soft chevron centered under the glyph strip
+  collapses and reopens it with one tap.
 
 ## v1.2.1 — 2026-08-04
 
