@@ -75,7 +75,11 @@ from PyQt6.QtGui import (
     QTextCharFormat,
     QTextCursor,
     QTextDocument,
+    QTextFrameFormat,
+    QTextLength,
     QTextListFormat,
+    QTextTable,
+    QTextTableFormat,
 )
 from PyQt6.QtWidgets import (
     QApplication,
@@ -421,6 +425,37 @@ class FormatKeepingTextEdit(QTextEdit):
             self.setCurrentCharFormat(fmt)
         else:
             super().keyPressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        """Keep a drag-selection inside the column it started in.
+
+        In a columns layout (a table), Qt would otherwise select whole cells
+        once the drag crosses a column boundary. If the selection began inside a
+        column, clamp the moving end back into that column so each column selects
+        independently.
+        """
+        super().mouseMoveEvent(event)
+        if not (event.buttons() & Qt.MouseButton.LeftButton):
+            return
+        cursor = self.textCursor()
+        if not cursor.hasSelection():
+            return
+        doc = self.document()
+        anchor = QTextCursor(doc)
+        anchor.setPosition(cursor.anchor())
+        table = anchor.currentTable()
+        if table is None:
+            return  # selection didn't start in a columns block
+        cell = table.cellAt(anchor)
+        first = cell.firstCursorPosition().position()
+        last = cell.lastCursorPosition().position()
+        if first <= cursor.position() <= last:
+            return  # still inside the starting column
+        clamped = max(first, min(last, cursor.position()))
+        fixed = QTextCursor(doc)
+        fixed.setPosition(cursor.anchor())
+        fixed.setPosition(clamped, QTextCursor.MoveMode.KeepAnchor)
+        self.setTextCursor(fixed)
 
 
 class BrandingLabel(QWidget):
@@ -1052,6 +1087,12 @@ class MoonScribe(QMainWindow):
         # Format menu is populated later (glyph toggle + theme submenu); create it
         # here so the menu order stays File / Edit / Format / Help.
         self.format_menu = self.menuBar().addMenu("F&ormat")
+        columns_menu = self.format_menu.addMenu("Insert &Columns")
+        for count in (2, 3, 4, 5):
+            label = f"{count} columns"
+            columns_menu.addAction(label).triggered.connect(
+                lambda _=False, n=count: self._insert_columns(n)
+            )
 
         help_menu = self.menuBar().addMenu("&Help")
         self._add_action(help_menu, "&About MoonScribe", None, self._show_about)
@@ -1406,6 +1447,60 @@ class MoonScribe(QMainWindow):
         cursor.mergeCharFormat(fmt)
         self.editor.mergeCurrentCharFormat(fmt)
         self.editor.setFocus()
+
+    def _insert_columns(self, n):
+        """Insert an n-column layout (a soft-bordered table) at the cursor.
+
+        Each column is its own cell you can write in (Tab moves between them).
+        Columns can't be nested inside a column. The dividers use a theme-matched
+        tone; cell spacing gives each column its own boxed look.
+        """
+        editor = self.editor
+        if editor is None:
+            return
+        if editor.textCursor().currentTable() is not None:
+            return  # already inside columns — don't nest them
+        theme = THEMES[self._current_theme]
+        # Use the theme's glyph colour for the dividers — bold enough to see and
+        # matches each theme. Existing columns are recoloured on theme change
+        # via _refresh_column_borders.
+        divider = QColor(theme["glyph_fg"])
+        divider.setAlpha(200)
+        fmt = QTextTableFormat()
+        fmt.setBorderStyle(QTextFrameFormat.BorderStyle.BorderStyle_Solid)
+        fmt.setBorderBrush(QBrush(divider))
+        fmt.setBorder(2)         # a touch thicker
+        fmt.setCellPadding(14)   # roomier boxes
+        fmt.setCellSpacing(6)    # gaps so each column reads as its own box
+        fmt.setWidth(QTextLength(QTextLength.Type.PercentageLength, 100.0))
+        fmt.setColumnWidthConstraints(
+            [QTextLength(QTextLength.Type.PercentageLength, 100.0 / n) for _ in range(n)]
+        )
+        cursor = editor.textCursor()
+        table = cursor.insertTable(1, n, fmt)
+        # Give each column real vertical room to start with — don't be shy.
+        for col in range(n):
+            table.cellAt(0, col).firstCursorPosition().insertText("\n\n\n\n\n")
+        # Drop the cursor into the first column so the user can start typing.
+        editor.setTextCursor(table.cellAt(0, 0).firstCursorPosition())
+        editor.setFocus()
+
+    def _refresh_column_borders(self, color):
+        """Recolour existing column dividers to match the current theme.
+
+        The divider colour is stored in each note's table, so switching themes
+        wouldn't update it on its own — this repaints every column block across
+        the open tabs to the new theme's glyph colour.
+        """
+        tint = QColor(color)
+        tint.setAlpha(200)
+        brush = QBrush(tint)
+        for editor in self._all_editors():
+            for frame in editor.document().rootFrame().childFrames():
+                if isinstance(frame, QTextTable):
+                    fmt = frame.format()
+                    fmt.setBorderBrush(brush)
+                    frame.setFormat(fmt)
 
     def _on_font_selected(self, family):
         self._apply_family(family)
@@ -2229,6 +2324,7 @@ class MoonScribe(QMainWindow):
         if hasattr(self, "text_color_btn"):
             self._refresh_color_button(self.text_color_btn)
             self._refresh_color_button(self.highlight_btn)
+        self._refresh_column_borders(theme["glyph_fg"])
 
         # Keep the toolbar dropdown and Format-menu radio in sync with the choice.
         self.theme_combo.blockSignals(True)

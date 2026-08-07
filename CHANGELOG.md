@@ -18,6 +18,9 @@ The newest version is always at the top.
   for a palette of colors ("More colours…" is there for anything custom).
 - **Gentle glyph-panel toggle** — a soft chevron centered under the glyph strip
   collapses and reopens it with one tap.
+- **Columns** — Format → Insert Columns splits part of a note into 2–5
+  side-by-side columns (lovely for organizing lists), with soft dividers that
+  match each theme. Each column edits and selects independently.
 
 ## v1.2.1 — 2026-08-04
 
