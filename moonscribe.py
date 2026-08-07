@@ -133,7 +133,7 @@ ICON_PNG = resource_path("MoonScribe-Icon.png")
 # quietly asks GitHub's public API for the latest release and, if it's newer,
 # shows a gentle in-app notice pointing at the releases page.  Bump APP_VERSION
 # on every release so older copies out in the wild know they're behind.
-APP_VERSION = "1.2.1"
+APP_VERSION = "1.3.0"
 GITHUB_REPO = "QueenMermaidCat/MoonScribe"
 LATEST_RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 RELEASES_PAGE = f"https://github.com/{GITHUB_REPO}/releases/latest"
@@ -389,6 +389,25 @@ class HorizontalScrollArea(QScrollArea):
         delta = event.angleDelta().y() or event.angleDelta().x()
         bar.setValue(bar.value() - delta)
         event.accept()
+
+
+class FormatKeepingTextEdit(QTextEdit):
+    """A QTextEdit that keeps the current character format across Enter.
+
+    Qt resets the char format to the document default when you press Enter on an
+    already-empty line, which made typing after a blank line snap back to the
+    default font/size (the "hit Enter twice → back to default font" bug).
+    Capturing the format before the keystroke and restoring it after keeps your
+    font/size going, even across blank lines.
+    """
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            fmt = self.currentCharFormat()
+            super().keyPressEvent(event)
+            self.setCurrentCharFormat(fmt)
+        else:
+            super().keyPressEvent(event)
 
 
 class BrandingLabel(QWidget):
@@ -696,6 +715,9 @@ class MoonScribe(QMainWindow):
         self._fav_fonts = list(self._settings.value("fonts/favorites", []) or [])
         self._recent_fonts = list(self._settings.value("fonts/recent", []) or [])
         self._last_font = self._settings.value("fonts/last", "") or ""
+        # Last colours chosen this session, for one-click re-apply (None = none yet).
+        self._last_text_color = None
+        self._last_highlight_color = None
 
         # The document's base font: what blank lines and un-formatted text fall
         # back to.  Kept in step with toolbar picks (when nothing is selected)
@@ -798,7 +820,7 @@ class MoonScribe(QMainWindow):
     def _new_editor(self):
         """Build a fully wired editor for a new tab (same setup the single
         editor used to get, plus its own path/state and spell highlighter)."""
-        editor = QTextEdit()
+        editor = FormatKeepingTextEdit()
         editor.setFrameShape(QFrame.Shape.NoFrame)
         editor.setLineWrapMode(self._wrap_mode)
         editor.setPlaceholderText("Begin writing…")
@@ -1165,6 +1187,17 @@ class MoonScribe(QMainWindow):
         self.italic_btn = self._tool_button("Italic", self._toggle_italic, text="I", font=italic_font, checkable=True)
         self.underline_btn = self._tool_button("Underline", self._toggle_underline, text="U", font=underline_font, checkable=True)
         self.strike_btn = self._tool_button("Strikethrough", self._toggle_strike, text="S", font=strike_font, checkable=True)
+        # Standard formatting shortcuts. Activating one clicks the checkable
+        # button, so it toggles the format AND keeps the toolbar in sync.
+        for btn, key in (
+            (self.bold_btn, QKeySequence.StandardKey.Bold),
+            (self.italic_btn, QKeySequence.StandardKey.Italic),
+            (self.underline_btn, QKeySequence.StandardKey.Underline),
+        ):
+            btn.setShortcut(key)
+            seq = btn.shortcut().toString()
+            if seq:
+                btn.setToolTip(f"{btn.toolTip()} ({seq})")
         for button in (self.bold_btn, self.italic_btn, self.underline_btn, self.strike_btn):
             toolbar.addWidget(button)
         toolbar.addSeparator()
@@ -1179,10 +1212,19 @@ class MoonScribe(QMainWindow):
         toolbar.addSeparator()
 
         color_font = QFont(); color_font.setPointSize(14)
-        self.text_color_btn = self._tool_button("Text color", self._pick_text_color, text="A", font=color_font)
+        # Left-click re-applies the last-used colour (no dialog); right-click
+        # opens the picker to choose a new one.
+        self.text_color_btn = self._tool_button("Text color", self._apply_text_color, text="A", font=color_font)
         self.highlight_btn = self._tool_button(
-            "Highlight color", self._pick_highlight_color, text="\N{LOWER LEFT PENCIL}", font=color_font
+            "Highlight color", self._apply_highlight_color, text="\N{LOWER LEFT PENCIL}", font=color_font
         )
+        for btn, chooser, label in (
+            (self.text_color_btn, self._choose_text_color, "Text color"),
+            (self.highlight_btn, self._choose_highlight_color, "Highlight color"),
+        ):
+            btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            btn.customContextMenuRequested.connect(lambda _pos, c=chooser: c())
+            btn.setToolTip(f"{label} — click to re-apply, right-click to choose")
         toolbar.addWidget(self.text_color_btn)
         toolbar.addWidget(self.highlight_btn)
 
@@ -1377,7 +1419,11 @@ class MoonScribe(QMainWindow):
         self._merge_format(fmt)
         if not self.editor.textCursor().hasSelection():
             self._base_font.setFamily(family)
-            self.editor.document().setDefaultFont(self._base_font)
+            # Only set the document default while empty — otherwise this would
+            # retroactively re-font text already typed without an explicit
+            # family. Future typing uses this family via mergeCurrentCharFormat.
+            if self.editor.document().isEmpty():
+                self.editor.document().setDefaultFont(self._base_font)
 
     def _record_recent(self, family):
         recents = self._recent_fonts
@@ -1426,18 +1472,52 @@ class MoonScribe(QMainWindow):
         self._merge_format(fmt)
         if not self.editor.textCursor().hasSelection():
             self._base_font.setPointSizeF(size)
-            self.editor.document().setDefaultFont(self._base_font)
+            # Only push the base font onto the document as its default while it's
+            # still empty. Doing it once there's text would retroactively resize
+            # everything already typed without an explicit size (the "font/size
+            # changes when I hit Enter" bug). Future typing still uses this size
+            # via mergeCurrentCharFormat above.
+            if self.editor.document().isEmpty():
+                self.editor.document().setDefaultFont(self._base_font)
 
-    def _pick_text_color(self):
-        color = QColorDialog.getColor(Qt.GlobalColor.black, self, "Text color")
+    def _apply_text_color(self):
+        # Left-click: re-apply the last colour instantly; if none chosen yet this
+        # session, fall back to opening the picker.
+        if self._last_text_color is None:
+            self._choose_text_color()
+        else:
+            fmt = QTextCharFormat()
+            fmt.setForeground(self._last_text_color)
+            self._merge_format(fmt)
+
+    def _choose_text_color(self):
+        initial = self._last_text_color or QColor(Qt.GlobalColor.black)
+        color = QColorDialog.getColor(initial, self, "Text color")
         if color.isValid():
+            self._last_text_color = color
+            self.text_color_btn.setToolTip(
+                f"Text color ({color.name()}) — click to re-apply, right-click to choose"
+            )
             fmt = QTextCharFormat()
             fmt.setForeground(color)
             self._merge_format(fmt)
 
-    def _pick_highlight_color(self):
-        color = QColorDialog.getColor(Qt.GlobalColor.yellow, self, "Highlight color")
+    def _apply_highlight_color(self):
+        if self._last_highlight_color is None:
+            self._choose_highlight_color()
+        else:
+            fmt = QTextCharFormat()
+            fmt.setBackground(self._last_highlight_color)
+            self._merge_format(fmt)
+
+    def _choose_highlight_color(self):
+        initial = self._last_highlight_color or QColor(Qt.GlobalColor.yellow)
+        color = QColorDialog.getColor(initial, self, "Highlight color")
         if color.isValid():
+            self._last_highlight_color = color
+            self.highlight_btn.setToolTip(
+                f"Highlight color ({color.name()}) — click to re-apply, right-click to choose"
+            )
             fmt = QTextCharFormat()
             fmt.setBackground(color)
             self._merge_format(fmt)

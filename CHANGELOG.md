@@ -4,6 +4,18 @@ All notable changes to MoonScribe are recorded here. 🌙
 
 The newest version is always at the top.
 
+## v1.3.0 — 2026-08-05
+
+### Fixed
+- **The font no longer resets when you press Enter** — including on blank lines.
+  Your chosen font and size now carry through as you write, and picking a new
+  size for a fresh line no longer resizes text you'd already typed.
+
+### Added
+- **Formatting shortcuts** — Bold (Ctrl+B), Italic (Ctrl+I), Underline (Ctrl+U).
+- **One-click color re-apply** — left-click the **A** (text color) or highlight
+  button to instantly reuse your last color; right-click to pick a new one.
+
 ## v1.2.1 — 2026-08-04
 
 ### Changed
