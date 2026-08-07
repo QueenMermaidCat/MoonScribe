@@ -21,6 +21,10 @@ The newest version is always at the top.
 - **Columns** — Format → Insert Columns splits part of a note into 2–5
   side-by-side columns (lovely for organizing lists), with soft dividers that
   match each theme. Each column edits and selects independently.
+- **Notebooks** — File → Save Notebook bundles all your open tabs into one
+  portable file, and File → Open Notebook brings the whole set back together
+  (MoonScribe always starts fresh — notebooks only open when you ask).
+  Double-clicking a saved `.mnote` or `.mnotebook` now opens it in MoonScribe.
 
 ## v1.2.1 — 2026-08-04
 

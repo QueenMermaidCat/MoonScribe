@@ -121,6 +121,10 @@ except Exception:  # pyspellchecker not installed — spellcheck disables gracef
 # Save/Save As always write it; HTML/PDF/TXT are one-way exports.
 NATIVE_EXT = ".mnote"
 SAVE_FILTER = "MoonScribe Note (*.mnote)"
+# A Notebook bundles every open tab into one portable file (JSON of names +
+# rich-text HTML), so a whole set of notes can be reopened together on request.
+NOTEBOOK_EXT = ".mnotebook"
+NOTEBOOK_FILTER = "MoonScribe Notebook (*.mnotebook)"
 OPEN_FILTER = (
     "MoonScribe & readable files (*.mnote *.html *.htm *.txt);;"
     "MoonScribe Note (*.mnote);;"
@@ -1055,6 +1059,10 @@ class MoonScribe(QMainWindow):
         self._add_action(export_menu, "Plain &Text…", None, self.export_txt)
 
         file_menu.addSeparator()
+        self._add_action(file_menu, "Save Note&book…", None, self.save_notebook)
+        self._add_action(file_menu, "Open Not&ebook…", None, self.open_notebook)
+
+        file_menu.addSeparator()
         # Use an explicit Ctrl+Q rather than StandardKey.Quit: on Windows the
         # latter renders in the menu's shortcut column as the literal word
         # "Exit", so the row reads "Exit    Exit".
@@ -1163,6 +1171,11 @@ class MoonScribe(QMainWindow):
             "<p>A modern rich-text editor built for notes, journals, "
             "stories, and everyday writing.</p>"
             f"<p style=\"color:#8a8a98;\">Version {APP_VERSION}</p>"
+            "<p><b>Notebooks:</b><br>"
+            "Save all your open tabs together as one file "
+            "(File → Save Notebook), and reopen the whole set later "
+            "(File → Open Notebook). MoonScribe always starts fresh — notebooks "
+            "only open when you ask.</p>"
             "<p><b>Autosave &amp; recovery:</b><br>"
             "While you have unsaved changes, MoonScribe quietly saves a backup "
             "every 60 seconds, so an unexpected shutdown won't lose your work. "
@@ -2433,8 +2446,10 @@ class MoonScribe(QMainWindow):
 
     def file_open(self):
         path, _ = QFileDialog.getOpenFileName(self, "Open", "", OPEN_FILTER)
-        if not path:
-            return
+        if path:
+            self._open_note_path(path)
+
+    def _open_note_path(self, path):
         try:
             with open(path, "r", encoding="utf-8") as f:
                 content = f.read()
@@ -2464,6 +2479,107 @@ class MoonScribe(QMainWindow):
             editor._suggested = os.path.splitext(os.path.basename(path))[0]
         editor.document().setModified(False)
         self._update_title()
+
+    def _tab_name(self, editor):
+        if editor._path:
+            return os.path.basename(editor._path)
+        if editor._suggested:
+            return editor._suggested
+        return "Untitled"
+
+    def save_notebook(self):
+        """Save every open tab together as one portable .mnotebook file."""
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save Notebook", "notebook" + NOTEBOOK_EXT, NOTEBOOK_FILTER
+        )
+        if not path:
+            return
+        if not path.lower().endswith(NOTEBOOK_EXT):
+            path += NOTEBOOK_EXT
+        data = {
+            "moonscribe_notebook": 1,
+            "active": self.tabs.currentIndex(),
+            "tabs": [
+                {
+                    "name": self._tab_name(editor),
+                    "path": editor._path,
+                    "html": editor.toHtml(),
+                }
+                for editor in self._all_editors()
+            ],
+        }
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except OSError as error:
+            QMessageBox.warning(self, "MoonScribe", f"Could not save notebook:\n{error}")
+            return
+        # The tabs are now saved (inside the notebook), so clear their unsaved
+        # marks — closing shouldn't nag to save each one individually.
+        for editor in self._all_editors():
+            editor.document().setModified(False)
+            self._update_tab_label(editor)
+        self._update_title()
+
+    def open_notebook(self):
+        """Open a .mnotebook, restoring all its tabs at once (on request only)."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open Notebook", "", NOTEBOOK_FILTER
+        )
+        if path:
+            self._open_notebook_path(path)
+
+    def open_file_at(self, path):
+        """Open a note or notebook by path (used when launched with a file)."""
+        if path.lower().endswith(NOTEBOOK_EXT):
+            self._open_notebook_path(path)
+        else:
+            self._open_note_path(path)
+
+    def _open_notebook_path(self, path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, "MoonScribe", f"Could not open notebook:\n{error}")
+            return
+        tabs = data.get("tabs") if isinstance(data, dict) else None
+        if not isinstance(data, dict) or "moonscribe_notebook" not in data or not tabs:
+            QMessageBox.warning(
+                self, "MoonScribe", "That doesn't look like a MoonScribe notebook."
+            )
+            return
+
+        # Reuse a lone pristine blank tab for the first note; otherwise add tabs.
+        pristine = None
+        if self.tabs.count() == 1:
+            only = self.tabs.widget(0)
+            if (only._path is None and not only.document().isModified()
+                    and not only.toPlainText().strip()):
+                pristine = only
+        base = 0 if pristine is not None else self.tabs.count()
+
+        for i, entry in enumerate(tabs):
+            editor = pristine if (i == 0 and pristine is not None) else self._add_tab(make_current=False)
+            editor.setHtml(entry.get("html", ""))
+            saved_path = entry.get("path")
+            if saved_path:
+                editor._path = saved_path
+                editor._suggested = None
+            else:
+                editor._path = None
+                editor._suggested = entry.get("name") or None
+            editor.document().setModified(False)
+            self._update_tab_label(editor)
+
+        active = data.get("active", 0)
+        if not isinstance(active, int) or not (0 <= active < len(tabs)):
+            active = 0
+        self.tabs.setCurrentIndex(base + active)
+        self._update_tabbar_visibility()
+        self._update_title()
+        if self.editor is not None:
+            self.editor.setFocus()
 
     def file_save(self):
         if self.current_path is None:
@@ -2722,6 +2838,49 @@ class MoonScribe(QMainWindow):
             self._update_tab_label(e)
 
 
+def register_file_associations():
+    """Associate .mnote/.mnotebook with this MoonScribe.exe (per-user, no admin).
+
+    Runs only from the frozen exe, so the command points at MoonScribe.exe (not
+    python), and re-registers each launch — which also keeps the path correct if
+    the portable app is moved. Writes only under HKCU\\Software\\Classes (a
+    per-user setting, reversible). Fully best-effort: never breaks startup.
+    """
+    if sys.platform != "win32" or not getattr(sys, "frozen", False):
+        return
+    try:
+        import winreg
+
+        exe = sys.executable
+        classes = r"Software\Classes"
+        assocs = [
+            (".mnote", "MoonScribe.note", "MoonScribe Note"),
+            (".mnotebook", "MoonScribe.notebook", "MoonScribe Notebook"),
+        ]
+        for ext, progid, desc in assocs:
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, f"{classes}\\{ext}") as key:
+                winreg.SetValueEx(key, "", 0, winreg.REG_SZ, progid)
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, f"{classes}\\{progid}") as key:
+                winreg.SetValueEx(key, "", 0, winreg.REG_SZ, desc)
+            with winreg.CreateKey(
+                winreg.HKEY_CURRENT_USER, f"{classes}\\{progid}\\DefaultIcon"
+            ) as key:
+                winreg.SetValueEx(key, "", 0, winreg.REG_SZ, f'"{exe}",0')
+            with winreg.CreateKey(
+                winreg.HKEY_CURRENT_USER, f"{classes}\\{progid}\\shell\\open\\command"
+            ) as key:
+                winreg.SetValueEx(key, "", 0, winreg.REG_SZ, f'"{exe}" "%1"')
+        # Nudge Explorer to notice the new associations/icons.
+        try:
+            import ctypes
+
+            ctypes.windll.shell32.SHChangeNotify(0x08000000, 0x0000, None, None)
+        except Exception:
+            pass
+    except Exception:
+        pass  # never let association setup interfere with launching
+
+
 def main():
     # Silence harmless "CreateFontFaceFromHDC failed" chatter that Qt prints when
     # it enumerates a few legacy Windows bitmap fonts for the font picker.
@@ -2737,6 +2896,8 @@ def main():
         except Exception:
             pass
 
+    register_file_associations()
+
     app = QApplication(sys.argv)
     app.setOrganizationName("MoonScribe")
     app.setApplicationName("MoonScribe")
@@ -2744,6 +2905,12 @@ def main():
     register_logo_font()
     window = MoonScribe()
     window.show()
+    # If launched with a file (e.g. double-clicking a .mnote or .mnotebook once
+    # Windows is set to open them with MoonScribe), open it now.
+    for candidate in sys.argv[1:]:
+        if os.path.isfile(candidate):
+            window.open_file_at(candidate)
+            break
     sys.exit(app.exec())
 
 
