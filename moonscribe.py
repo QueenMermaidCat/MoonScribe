@@ -1095,12 +1095,15 @@ class MoonScribe(QMainWindow):
         # Format menu is populated later (glyph toggle + theme submenu); create it
         # here so the menu order stays File / Edit / Format / Help.
         self.format_menu = self.menuBar().addMenu("F&ormat")
-        columns_menu = self.format_menu.addMenu("Insert &Columns")
+        columns_menu = self.format_menu.addMenu("&Columns")
         for count in (2, 3, 4, 5):
-            label = f"{count} columns"
-            columns_menu.addAction(label).triggered.connect(
+            columns_menu.addAction(f"Insert {count} columns").triggered.connect(
                 lambda _=False, n=count: self._insert_columns(n)
             )
+        columns_menu.addSeparator()
+        columns_menu.addAction("Remove columns").triggered.connect(
+            lambda _=False: self._remove_columns()
+        )
 
         help_menu = self.menuBar().addMenu("&Help")
         self._add_action(help_menu, "&About MoonScribe", None, self._show_about)
@@ -1496,6 +1499,44 @@ class MoonScribe(QMainWindow):
             table.cellAt(0, col).firstCursorPosition().insertText("\n\n\n\n\n")
         # Drop the cursor into the first column so the user can start typing.
         editor.setTextCursor(table.cellAt(0, 0).firstCursorPosition())
+        editor.setFocus()
+
+    def _remove_columns(self):
+        """Remove the column layout the cursor is in, keeping the text.
+
+        Each column's text is pulled out into normal paragraphs (in order), then
+        the table is deleted — so the writing survives, just un-columned.
+        """
+        editor = self.editor
+        if editor is None:
+            return
+        table = editor.textCursor().currentTable()
+        if table is None:
+            return  # not inside a columns block
+        # Collect each column's text before removing (order preserved). Use the
+        # cells' own cursors — safe, unlike a detached QTextCursor(document).
+        chunks = []
+        for col in range(table.columns()):
+            cell = table.cellAt(0, col)
+            picker = cell.firstCursorPosition()
+            picker.setPosition(
+                cell.lastCursorPosition().position(), QTextCursor.MoveMode.KeepAnchor
+            )
+            text = picker.selection().toPlainText().strip()
+            if text:
+                chunks.append(text)
+        first, last = table.firstPosition(), table.lastPosition()
+        # Delete the whole table frame using the EDITOR's cursor inside an edit
+        # block (a detached document cursor crashes Qt here).
+        cursor = editor.textCursor()
+        cursor.beginEditBlock()
+        cursor.setPosition(max(0, first - 1))
+        cursor.setPosition(last + 1, QTextCursor.MoveMode.KeepAnchor)
+        cursor.removeSelectedText()
+        if chunks:
+            cursor.insertText("\n\n".join(chunks))
+        cursor.endEditBlock()
+        editor.setTextCursor(cursor)
         editor.setFocus()
 
     def _refresh_column_borders(self, color):

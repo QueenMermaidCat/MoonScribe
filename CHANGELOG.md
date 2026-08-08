@@ -18,9 +18,10 @@ The newest version is always at the top.
   for a palette of colors ("More colours…" is there for anything custom).
 - **Gentle glyph-panel toggle** — a soft chevron centered under the glyph strip
   collapses and reopens it with one tap.
-- **Columns** — Format → Insert Columns splits part of a note into 2–5
-  side-by-side columns (lovely for organizing lists), with soft dividers that
-  match each theme. Each column edits and selects independently.
+- **Columns** — Format → Columns splits part of a note into 2–5 side-by-side
+  columns (lovely for organizing lists), with soft dividers that match each
+  theme. Each column edits and selects independently, and "Remove columns"
+  takes them back to normal text (keeping your writing).
 - **Notebooks** — File → Save Notebook bundles all your open tabs into one
   portable file, and File → Open Notebook brings the whole set back together
   (MoonScribe always starts fresh — notebooks only open when you ask).
