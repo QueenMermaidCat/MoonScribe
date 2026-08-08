@@ -4,12 +4,18 @@ All notable changes to MoonScribe are recorded here. 🌙
 
 The newest version is always at the top.
 
-## v1.3.0 — 2026-08-05
+## v1.3.0 — 2026-08-08
 
 ### Fixed
 - **The font no longer resets when you press Enter** — including on blank lines.
   Your chosen font and size now carry through as you write, and picking a new
   size for a fresh line no longer resizes text you'd already typed.
+
+### Changed
+- **A friendlier Help box** — Help → About MoonScribe now shows a few handy,
+  theme-matched tips (Tabs & Notebooks, Columns, Images, Updates & safety) in
+  MoonScribe's own script font.
+- The window now opens a touch wider, so each theme's moon is in view right away.
 
 ### Added
 - **Formatting shortcuts** — Bold (Ctrl+B), Italic (Ctrl+I), Underline (Ctrl+U).

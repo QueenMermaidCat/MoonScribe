@@ -26,10 +26,15 @@ big company); click **More info → Run anyway** to continue.
 
 - **Four calm themes** — MoonScribe Dark, Light Mode, a starry Cosmic mode, and a
   dreamy Pastel Moon.
-- **Tabs** — keep several notes open at once. They stay only for the current
-  session, so every launch opens fresh and uncluttered.
-- **Gentle rich text** — bold, italic, underline, strikethrough, alignment,
-  bullet lists, fonts, sizes, text color, and highlight.
+- **Tabs & Notebooks** — keep several notes open at once (they stay only for the
+  current session), and save a whole set as a **Notebook** to reopen them
+  together whenever you like.
+- **Gentle rich text** — bold, italic, underline (with Ctrl+B/I/U), strikethrough,
+  alignment, bullet lists, fonts, sizes, text color, and quick-apply highlight.
+- **Columns** — split part of a note into 2–5 side-by-side columns for tidy,
+  organized writing.
+- **Images** — paste, drag, or insert a picture straight into your note, then
+  right-click to resize it. It travels inside the file.
 - **Emoji & symbol strips** — a curated row of emojis and celestial glyphs to
   drop into your notes.
 - **Autosave & recovery** — while you have unsaved changes, MoonScribe quietly

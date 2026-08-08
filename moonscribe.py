@@ -773,7 +773,7 @@ class MoonScribe(QMainWindow):
         # Clamp to the screen so it never opens larger than a small display.
         screen = QApplication.primaryScreen()
         avail = screen.availableGeometry() if screen is not None else None
-        default_w = min(950, avail.width()) if avail else 950
+        default_w = min(1010, avail.width()) if avail else 1010
         default_h = min(880, avail.height()) if avail else 880
         self.resize(default_w, default_h)
         self.setMinimumWidth(min(700, default_w))
@@ -1225,45 +1225,89 @@ class MoonScribe(QMainWindow):
         cursor.insertText(replacement)
 
     def _show_about(self):
-        recovery_dir = os.path.dirname(self._recovery_path)
-        # Rich text so the "created by" credit can render in the Allura script
-        # font (the same face as the footer logo), which only the rich-text
-        # engine can draw from the loaded application font.
+        """A friendly, theme-matched Help box — the MoonScribe-specific tips a
+        new user might not spot (plus the 'created by' credit in Allura)."""
+        theme = THEMES[self._current_theme]
+        title = theme["chrome_fg"]
+        head = theme["glyph_fg"]       # section headers stand out per theme
+        body = theme["chrome_fg"]
+        muted = theme["muted"]
+
+        def section(header, text):
+            return (
+                f"<p style=\"font-family:'{LOGO_FONT_FAMILY}'; color:{head}; "
+                f"font-size:21px;\">{header}</p>"
+                f"<p style=\"color:{body};\">{text}</p>"
+            )
+
         html = (
             "<div style=\"font-family:'Segoe UI';\">"
-            "<p>MoonScribe — a calm space for your thoughts.</p>"
-            "<p>A modern rich-text editor built for notes, journals, "
-            "stories, and everyday writing.</p>"
-            f"<p style=\"color:#8a8a98;\">Version {APP_VERSION}</p>"
-            "<p><b>Notebooks:</b><br>"
-            "Save all your open tabs together as one file "
-            "(File → Save Notebook), and reopen the whole set later "
-            "(File → Open Notebook). MoonScribe always starts fresh — notebooks "
-            "only open when you ask.</p>"
-            "<p><b>Autosave &amp; recovery:</b><br>"
-            "While you have unsaved changes, MoonScribe quietly saves a backup "
-            "every 60 seconds, so an unexpected shutdown won't lose your work. "
-            "It's cleared automatically when you save or exit normally.</p>"
-            "<p>Backups are kept in:<br>"
-            f"{recovery_dir}</p>"
+            f"<div align='center' style=\"font-family:'{LOGO_FONT_FAMILY}'; "
+            f"font-size:34px; color:{title};\">☾ MoonScribe Help</div>"
+            "<br>"
+            + section(
+                "🗂️ Tabs &amp; Notebooks",
+                "Keep several notes open as tabs. To save a whole set for later, "
+                "bundle them into one file with <b>File → Save Notebook</b> and "
+                "reopen them together anytime.",
+            )
+            + section(
+                "↔️ Columns",
+                "<b>Format → Columns</b> splits part of a note into 2–5 "
+                "side-by-side columns — lovely for organizing.",
+            )
+            + section(
+                "🖼️ Images",
+                "Paste (<b>Ctrl+V</b>) or drag a picture straight in, then "
+                "<b>right-click</b> it to resize with a slider. It's tucked "
+                "inside the note, so it travels with the file.",
+            )
+            + section(
+                "🔔 Updates &amp; safety",
+                "MoonScribe quietly lets you know when a new version is ready, "
+                "and autosaves a backup every 60 seconds while you have unsaved "
+                "changes.",
+            )
+            + "<br>"
+            f"<div align='center' style=\"color:{muted}; font-size:12px;\">Version {APP_VERSION}</div>"
             f"<p align='center' style=\"font-family:'{LOGO_FONT_FAMILY}'; "
             "font-size:26px; color:#c39ae2;\">created by MermaidCat</p>"
             "</div>"
         )
-        box = QMessageBox(self)
-        box.setWindowTitle("About MoonScribe")
-        box.setTextFormat(Qt.TextFormat.RichText)
-        box.setText(html)
-        icon = QPixmap(ICON_PNG)
-        if not icon.isNull():
-            box.setIconPixmap(
-                icon.scaled(
-                    64, 64,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
-                )
-            )
-        box.exec()
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("About MoonScribe")
+        dialog.resize(520, 540)
+        dialog.setStyleSheet(
+            f"QDialog {{ background: {theme['chrome_bottom']}; }}"
+            "QScrollArea { background: transparent; border: none; }"
+            "QLabel { background: transparent; }"
+            f"QPushButton {{ background: {theme['surface']}; color: {theme['chrome_fg']};"
+            f" border: 1px solid {theme['border']}; border-radius: 6px; padding: 6px 18px; }}"
+            f"QPushButton:hover {{ background: {theme['button_hover']}; }}"
+            f"QScrollBar:vertical {{ background: transparent; width: 8px; margin: 2px; border-radius: 4px; }}"
+            f"QScrollBar::handle:vertical {{ background: {theme['scrollbar']}; border-radius: 4px; min-height: 30px; }}"
+        )
+        outer = QVBoxLayout(dialog)
+        content = QLabel()
+        content.setTextFormat(Qt.TextFormat.RichText)
+        content.setWordWrap(True)
+        content.setText(html)
+        content.setContentsMargins(8, 4, 8, 4)
+        content.setAlignment(Qt.AlignmentFlag.AlignTop)
+        scroll = QScrollArea()
+        scroll.setWidget(content)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        outer.addWidget(scroll, 1)
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.accept)
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+        button_row.addWidget(close_btn)
+        button_row.addStretch(1)
+        outer.addLayout(button_row)
+        dialog.exec()
 
     # ---- Toolbar -----------------------------------------------------------
     def _tool_button(self, tooltip, handler, text=None, font=None, checkable=False, objname=None):
