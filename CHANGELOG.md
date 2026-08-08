@@ -26,6 +26,10 @@ The newest version is always at the top.
   portable file, and File → Open Notebook brings the whole set back together
   (MoonScribe always starts fresh — notebooks only open when you ask).
   Double-clicking a saved `.mnote` or `.mnotebook` now opens it in MoonScribe.
+- **Images** — Format → Insert Image (or just paste/drag one in) embeds a
+  picture right in the note, so it travels with the file. Right-click an image
+  to resize it with a slider or remove it — and the resize dialog matches your
+  theme.
 
 ## v1.2.1 — 2026-08-04
 

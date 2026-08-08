@@ -35,7 +35,9 @@ def resource_path(*parts):
     return os.path.join(base, *parts)
 
 from PyQt6.QtCore import (
+    QBuffer,
     QEvent,
+    QIODevice,
     QMarginsF,
     QPointF,
     QRectF,
@@ -58,6 +60,7 @@ from PyQt6.QtGui import (
     QFontDatabase,
     QFontMetricsF,
     QIcon,
+    QImage,
     QKeySequence,
     QLinearGradient,
     QPageLayout,
@@ -85,6 +88,7 @@ from PyQt6.QtWidgets import (
     QApplication,
     QColorDialog,
     QComboBox,
+    QDialog,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -96,6 +100,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSlider,
     QStyledItemDelegate,
     QTabBar,
     QTabWidget,
@@ -412,6 +417,23 @@ class HorizontalScrollArea(QScrollArea):
         event.accept()
 
 
+def image_to_html(image, max_width=620):
+    """Return an <img> data-URI fragment for a QImage, scaled to max_width.
+
+    Embeds the picture in the document itself (base64) so notes stay portable.
+    Shared by Insert Image and paste/drop.
+    """
+    if image is None or image.isNull():
+        return None
+    if image.width() > max_width:
+        image = image.scaledToWidth(max_width, Qt.TransformationMode.SmoothTransformation)
+    buffer = QBuffer()
+    buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+    image.save(buffer, "PNG")
+    encoded = bytes(buffer.data().toBase64()).decode("ascii")
+    return f'<img src="data:image/png;base64,{encoded}" width="{image.width()}" />'
+
+
 class FormatKeepingTextEdit(QTextEdit):
     """A QTextEdit that keeps the current character format across Enter.
 
@@ -460,6 +482,29 @@ class FormatKeepingTextEdit(QTextEdit):
         fixed.setPosition(cursor.anchor())
         fixed.setPosition(clamped, QTextCursor.MoveMode.KeepAnchor)
         self.setTextCursor(fixed)
+
+    def canInsertFromMimeData(self, source):
+        return source.hasImage() or super().canInsertFromMimeData(source)
+
+    def insertFromMimeData(self, source):
+        """Paste (or drop) an image straight into the note, embedded."""
+        if source.hasImage():
+            image = source.imageData()
+            if isinstance(image, QImage):
+                html = image_to_html(image)
+                if html:
+                    self.textCursor().insertHtml(html)
+                    return
+        if source.hasUrls():
+            for url in source.urls():
+                if url.isLocalFile():
+                    dropped = QImage(url.toLocalFile())
+                    if not dropped.isNull():
+                        html = image_to_html(dropped)
+                        if html:
+                            self.textCursor().insertHtml(html)
+                            return
+        super().insertFromMimeData(source)
 
 
 class BrandingLabel(QWidget):
@@ -1104,6 +1149,8 @@ class MoonScribe(QMainWindow):
         columns_menu.addAction("Remove columns").triggered.connect(
             lambda _=False: self._remove_columns()
         )
+        self._add_action(self.format_menu, "Insert &Image…", None, self._insert_image)
+        self._add_action(self.format_menu, "&Resize Image…", None, self._resize_image)
 
         help_menu = self.menuBar().addMenu("&Help")
         self._add_action(help_menu, "&About MoonScribe", None, self._show_about)
@@ -1133,6 +1180,20 @@ class MoonScribe(QMainWindow):
         """Standard editor menu, prefixed with spelling suggestions when the
         word under the cursor is misspelled."""
         menu = editor.createStandardContextMenu()
+        # Right-clicking an image: offer resize + remove at the top.
+        image_probe = self._image_cursor_at(pos)
+        if image_probe is not None:
+            first = menu.actions()[0] if menu.actions() else None
+            resize_act = QAction("Resize image…", menu)
+            resize_act.triggered.connect(
+                lambda _=False, p=QTextCursor(image_probe): self._resize_image(p)
+            )
+            remove_act = QAction("Remove image", menu)
+            remove_act.triggered.connect(
+                lambda _=False, p=QTextCursor(image_probe): self._remove_image(p)
+            )
+            menu.insertActions(first, [resize_act, remove_act])
+            menu.insertSeparator(first)
         if self._spell is not None and self._spell_enabled:
             cursor = editor.cursorForPosition(pos)
             cursor.select(QTextCursor.SelectionType.WordUnderCursor)
@@ -1500,6 +1561,145 @@ class MoonScribe(QMainWindow):
         # Drop the cursor into the first column so the user can start typing.
         editor.setTextCursor(table.cellAt(0, 0).firstCursorPosition())
         editor.setFocus()
+
+    def _insert_image(self):
+        """Insert a picture at the cursor, embedded in the note so it stays
+        self-contained (the image travels inside the .mnote, like Word)."""
+        editor = self.editor
+        if editor is None:
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Insert Image",
+            "",
+            "Images (*.png *.jpg *.jpeg *.gif *.bmp *.webp);;All Files (*)",
+        )
+        if not path:
+            return
+        image = QImage(path)
+        if image.isNull():
+            QMessageBox.warning(self, "MoonScribe", "Sorry, that image couldn't be loaded.")
+            return
+        html = image_to_html(image)
+        if html:
+            editor.textCursor().insertHtml(html)
+            editor.setFocus()
+
+    def _image_cursor(self):
+        """A FORWARD cursor selecting the image at/next to the caret, or None.
+
+        Forward (anchor before, position after) matters — mergeCharFormat doesn't
+        apply reliably to a backward selection.
+        """
+        editor = self.editor
+        if editor is None:
+            return None
+        pos = editor.textCursor().position()
+        for start in (pos, pos - 1):  # the char at the caret, or just before it
+            if start < 0:
+                continue
+            probe = editor.textCursor()
+            probe.setPosition(start)
+            moved = probe.movePosition(
+                QTextCursor.MoveOperation.NextCharacter, QTextCursor.MoveMode.KeepAnchor
+            )
+            if moved and probe.hasSelection() and probe.charFormat().isImageFormat():
+                return probe
+        return None
+
+    def _image_cursor_at(self, pos):
+        """A forward cursor selecting the image under a viewport point, or None."""
+        editor = self.editor
+        if editor is None:
+            return None
+        click = editor.cursorForPosition(pos).position()
+        for start in (click, click - 1):
+            if start < 0:
+                continue
+            probe = editor.textCursor()
+            probe.setPosition(start)
+            moved = probe.movePosition(
+                QTextCursor.MoveOperation.NextCharacter, QTextCursor.MoveMode.KeepAnchor
+            )
+            if moved and probe.hasSelection() and probe.charFormat().isImageFormat():
+                return probe
+        return None
+
+    def _remove_image(self, probe):
+        """Delete the image the given cursor selects (kept safe via edit block)."""
+        editor = self.editor
+        if editor is None or probe is None:
+            return
+        cursor = editor.textCursor()
+        cursor.beginEditBlock()
+        cursor.setPosition(probe.selectionStart())
+        cursor.setPosition(probe.selectionEnd(), QTextCursor.MoveMode.KeepAnchor)
+        cursor.removeSelectedText()
+        cursor.endEditBlock()
+        editor.setTextCursor(cursor)
+        editor.setFocus()
+
+    def _resize_image(self, probe=None):
+        """Resize an image with a live width slider (the one at the caret, or a
+        given one from the right-click menu)."""
+        if probe is None:
+            probe = self._image_cursor()
+        if probe is None:
+            QMessageBox.information(
+                self, "MoonScribe",
+                "Right-click an image and choose Resize image (or click next to it first).",
+            )
+            return
+        fmt = probe.charFormat().toImageFormat()
+        # Natural size (for aspect + a sensible max) from the embedded data.
+        aspect, natural_w = 1.0, 620
+        name = fmt.name()
+        if name.startswith("data:") and "," in name:
+            try:
+                natural = QImage.fromData(base64.b64decode(name.split(",", 1)[1]))
+                if not natural.isNull() and natural.width() > 0:
+                    natural_w = natural.width()
+                    aspect = natural.height() / natural.width()
+            except Exception:
+                pass
+        current = int(fmt.width()) or natural_w
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Resize image")
+        theme = THEMES[self._current_theme]
+        dialog.setStyleSheet(
+            f"QDialog {{ background: {theme['chrome_bottom']}; }}"
+            f"QLabel {{ color: {theme['chrome_fg']}; background: transparent; }}"
+            f"QSlider::groove:horizontal {{ height: 4px; background: {theme['scrollbar']}; border-radius: 2px; }}"
+            f"QSlider::sub-page:horizontal {{ background: {theme['accent']}; border-radius: 2px; }}"
+            f"QSlider::handle:horizontal {{ width: 16px; height: 16px; margin: -6px 0;"
+            f" background: {theme['accent']}; border-radius: 8px; }}"
+            f"QPushButton {{ background: {theme['surface']}; color: {theme['chrome_fg']};"
+            f" border: 1px solid {theme['border']}; border-radius: 6px; padding: 6px 16px; }}"
+            f"QPushButton:hover {{ background: {theme['button_hover']}; }}"
+        )
+        layout = QVBoxLayout(dialog)
+        label = QLabel(f"Width: {current} px")
+        slider = QSlider(Qt.Orientation.Horizontal)
+        slider.setMinimum(60)
+        slider.setMaximum(max(natural_w, current, 200))
+        slider.setValue(min(current, slider.maximum()))
+        layout.addWidget(label)
+        layout.addWidget(slider)
+        done = QPushButton("Done")
+        done.clicked.connect(dialog.accept)
+        layout.addWidget(done)
+
+        def on_change(value):
+            label.setText(f"Width: {value} px")
+            new_fmt = probe.charFormat().toImageFormat()
+            new_fmt.setWidth(value)
+            new_fmt.setHeight(int(value * aspect))
+            probe.mergeCharFormat(new_fmt)
+
+        slider.valueChanged.connect(on_change)
+        dialog.exec()
+        self.editor.setFocus()
 
     def _remove_columns(self):
         """Remove the column layout the cursor is in, keeping the text.
