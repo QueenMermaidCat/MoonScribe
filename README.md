@@ -55,6 +55,13 @@ the app.
 
 ---
 
+## 📄 License
+
+© 2026 MermaidCat. All rights reserved. MoonScribe is free to download and
+use — please ask before reusing the code. See [LICENSE](LICENSE) for details.
+
+---
+
 ## Created by MermaidCat
 
 MoonScribe is a personal project, made with care. 💜
