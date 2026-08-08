@@ -10,3 +10,6 @@ __pycache__/
 # Editor/OS cruft
 *.tmp
 Thumbs.db
+
+# Design sketchpads (kept local, not published)
+THEME_DRAFTS.md
