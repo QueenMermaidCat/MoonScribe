@@ -4,6 +4,21 @@ All notable changes to MoonScribe are recorded here. 🌙
 
 The newest version is always at the top.
 
+## v1.4.0 — 2026-08-15
+
+A few cozy little upgrades:
+
+### Added
+- **Expanded emoji collection.** Added more hearts, cat faces, animals, flowers,
+  symbols, and other favorites.
+- **Custom tab names.** Right-click any tab and select Rename to give it a custom
+  name. Tab names are preserved when saving and reopening a Notebook.
+- **Multi-selection formatting.** Hold Ctrl while selecting separate sections of
+  text, then apply font, size, or color changes to all selected sections at once.
+
+### Changed
+- **New app icon** — a soft purple crescent moon.
+
 ## v1.3.0 — 2026-08-08
 
 ### Fixed

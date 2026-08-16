@@ -26,22 +26,23 @@ big company); click **More info → Run anyway** to continue.
 
 - **Four calm themes** — MoonScribe Dark, Light Mode, a starry Cosmic mode, and a
   dreamy Pastel Moon.
-- **Tabs & Notebooks** — keep several notes open at once (they stay only for the
-  current session), and save a whole set as a **Notebook** to reopen them
-  together whenever you like.
-- **Gentle rich text** — bold, italic, underline (with Ctrl+B/I/U), strikethrough,
-  alignment, bullet lists, fonts, sizes, text color, and quick-apply highlight.
-- **Columns** — split part of a note into 2–5 side-by-side columns for tidy,
-  organized writing.
-- **Images** — paste, drag, or insert a picture straight into your note, then
-  right-click to resize it. It travels inside the file.
-- **Emoji & symbol strips** — a curated row of emojis and celestial glyphs to
-  drop into your notes.
-- **Autosave & recovery** — while you have unsaved changes, MoonScribe quietly
-  saves a backup every 60 seconds so an unexpected shutdown won't lose your work.
-- **Spell check** — with right-click suggestions; toggle it on or off.
-- **Your own format** — save notes as `.mnote`, or export to HTML, PDF, or
-  plain text.
+- **Tabs & Notebooks** — keep several notes open at once (they stay just for the
+  current session). Right-click a tab to rename it, or save a whole set as a
+  **Notebook** and open them all back up together whenever you like.
+- **Gentle rich text** — bold, italic, underline (Ctrl+B/I/U), strikethrough,
+  alignment, bullet lists, fonts, sizes, text color and highlight. Ctrl+drag to
+  select multiple sections of text, then format them all at once.
+- **Columns** — split part of a note into 2–5 side-by-side columns when you want
+  things laid out neatly.
+- **Images** — paste, drag, or drop a picture straight into your note, then
+  right-click to resize it. It lives inside the file, so it travels with it.
+- **Emojis & symbols** — personalize your notes with a wide variety of emojis
+  and symbols to choose from.
+- **Autosave & recovery** — while you've got unsaved changes, MoonScribe quietly
+  saves a backup every 60 seconds, so a surprise shutdown won't lose your work.
+- **Spell check** — with right-click suggestions; turn it on or off as you like.
+- **Your own format** — save notes as `.mnote`, or export to HTML, PDF or plain
+  text.
 - **Live word & character count**, full-screen mode, and a resizable window.
 
 ---

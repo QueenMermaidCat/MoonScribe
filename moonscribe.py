@@ -93,6 +93,7 @@ from PyQt6.QtWidgets import (
     QFrame,
     QGridLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QMainWindow,
     QMenu,
@@ -142,13 +143,13 @@ OPEN_FILTER = (
 COSMIC_ART = resource_path("MoonscribeTextbox.png")
 
 # App / taskbar icon (the crescent-moon artwork), shipped alongside the script.
-ICON_PNG = resource_path("MoonScribe-Icon.png")
+ICON_PNG = resource_path("Icon-MoonScribe.png")
 
 # This build's version, and where to look for newer ones.  On launch the app
 # quietly asks GitHub's public API for the latest release and, if it's newer,
 # shows a gentle in-app notice pointing at the releases page.  Bump APP_VERSION
 # on every release so older copies out in the wild know they're behind.
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.4.0"
 GITHUB_REPO = "QueenMermaidCat/MoonScribe"
 LATEST_RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 RELEASES_PAGE = f"https://github.com/{GITHUB_REPO}/releases/latest"
@@ -257,6 +258,13 @@ EMOJIS = [
     "💎", "💍", "💠", "👑",
     # Moons (all phases, incl. every crescent)
     "🌑", "🌒", "🌓", "🌔", "🌕", "🌖", "🌗", "🌘", "🌙", "🌚", "🌛", "🌜", "🌝",
+    # Hearts (every heart)
+    "❤️", "🧡", "💛", "💚", "💙", "💜", "🤎", "🖤", "🤍", "♥️",
+    "💗", "💓", "💞", "💕", "💖", "💘", "💝", "💟", "❣️", "💔",
+    "💌", "💋",
+    # Girly / cute
+    "🌷", "🌺", "🌻", "🌼", "💐", "🎀", "💄", "💅", "👛", "👜",
+    "🧁", "🍰", "🍓", "🍒", "🍭", "🩰",
     # Battle / weapons
     "⚔️", "🗡️", "🛡️", "🏹", "🪓", "🔱", "🗿", "💥", "🎯", "🏰",
     # Nature / plants
@@ -266,9 +274,27 @@ EMOJIS = [
     # Weather / elemental (moons excluded)
     "☀️", "🌤️", "⛅", "🌥️", "☁️", "🌦️", "🌧️", "⛈️", "🌩️", "🌨️",
     "❄️", "☃️", "🌬️", "🌪️", "🌫️", "🌈", "⚡", "🔥", "💧", "🌊",
-    # Animals
-    "🐺", "🦊", "🦉", "🦅", "🐍", "🦇", "🕷️", "🕸️", "🦢", "🐈",
-    "🦌", "🐎", "🦂", "🐢", "🦋", "🦖", "🐙", "🦚", "🦜", "🐇",
+    # Cats (every cat face + cat animals)
+    "🐱", "🐈", "😺", "😸", "😹", "😻", "😼", "😽", "🙀", "😿", "😾",
+    "🦁", "🐯", "🐅", "🐆",
+    # Animals — mammals
+    "🐶", "🐕", "🦮", "🐕‍🦺", "🐩", "🐺", "🦊", "🦝",
+    "🐴", "🐎", "🦓", "🦌", "🐮", "🐂", "🐃", "🐄",
+    "🐷", "🐖", "🐗", "🐽", "🐏", "🐑", "🐐", "🐪", "🐫", "🦙", "🦒",
+    "🐘", "🦏", "🦛", "🐭", "🐁", "🐀", "🐹", "🐰", "🐇",
+    "🐿️", "🦔", "🦇", "🐻", "🐨", "🐼", "🦥", "🦦", "🦨",
+    "🦘", "🦡", "🦧", "🦍",
+    # Animals — birds
+    "🐔", "🐓", "🐣", "🐤", "🐥", "🐦", "🐧", "🕊️", "🦅", "🦆",
+    "🦢", "🦉", "🦩", "🦚", "🦜", "🦃",
+    # Animals — reptiles & amphibians
+    "🐸", "🐊", "🐢", "🦎", "🐍",
+    # Animals — sea life
+    "🐳", "🐋", "🐬", "🐟", "🐠", "🐡", "🦈", "🐙", "🐚",
+    "🦀", "🦞", "🦐", "🦑",
+    # Animals — bugs & minibeasts
+    "🐌", "🦋", "🐛", "🐜", "🐝", "🐞", "🦗",
+    "🕷️", "🕸️", "🦂", "🦟", "🦠", "🐾",
     # Objects (at the very end)
     "📜", "📖", "🗝️",
 ]
@@ -444,7 +470,31 @@ class FormatKeepingTextEdit(QTextEdit):
     font/size going, even across blank lines.
     """
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Format-only multi-select: extra text ranges the user Ctrl-drags to
+        # format several pieces at once (e.g. a handful of titles).  Stored as
+        # (start, end) document positions — safe to keep because formatting never
+        # changes the text length, so the positions stay valid across applies.
+        self._multi_ranges = []
+        self._multi_dragging = False
+
     def keyPressEvent(self, event):
+        # Editing the text would move the stored positions, so any real edit
+        # ends a multi-selection first (Escape cancels it outright).
+        if self._multi_ranges:
+            if event.key() == Qt.Key.Key_Escape:
+                self._clear_multi()
+                return
+            mods = event.modifiers()
+            edits = event.key() in (Qt.Key.Key_Backspace, Qt.Key.Key_Delete) or (
+                bool(event.text())
+                and not (mods & (Qt.KeyboardModifier.ControlModifier
+                                 | Qt.KeyboardModifier.AltModifier
+                                 | Qt.KeyboardModifier.MetaModifier))
+            )
+            if edits:
+                self._clear_multi()
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             fmt = self.currentCharFormat()
             super().keyPressEvent(event)
@@ -482,6 +532,73 @@ class FormatKeepingTextEdit(QTextEdit):
         fixed.setPosition(cursor.anchor())
         fixed.setPosition(clamped, QTextCursor.MoveMode.KeepAnchor)
         self.setTextCursor(fixed)
+
+    # ---- Format-only multi-select (Ctrl+drag) ------------------------------
+    def mousePressEvent(self, event):
+        ctrl = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
+        if event.button() == Qt.MouseButton.LeftButton and ctrl:
+            # Begin an ADDITIONAL selection, keeping the ranges gathered so far.
+            # If this is the first Ctrl-drag, fold the current normal selection
+            # in as range #1 so it isn't lost.
+            if not self._multi_ranges:
+                cur = self.textCursor()
+                if cur.hasSelection():
+                    self._multi_ranges.append(
+                        (cur.selectionStart(), cur.selectionEnd())
+                    )
+            self._multi_dragging = True
+            super().mousePressEvent(event)
+            self._repaint_multi()
+            return
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._clear_multi()  # a plain click returns to normal editing
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        super().mouseReleaseEvent(event)
+        if self._multi_dragging:
+            self._multi_dragging = False
+            cur = self.textCursor()
+            if cur.hasSelection():
+                rng = (cur.selectionStart(), cur.selectionEnd())
+                if rng not in self._multi_ranges:
+                    self._multi_ranges.append(rng)
+            # Collapse the live selection so every range shows uniformly through
+            # the extra-selection highlight (no double-paint of the last one).
+            collapsed = self.textCursor()
+            collapsed.clearSelection()
+            self.setTextCursor(collapsed)
+            self._repaint_multi()
+
+    def has_multi(self):
+        return bool(self._multi_ranges)
+
+    def _repaint_multi(self):
+        """Highlight every stored range like a normal selection."""
+        selections = []
+        if self._multi_ranges:
+            pal = self.palette()
+            bg = pal.color(QPalette.ColorRole.Highlight)
+            fg = pal.color(QPalette.ColorRole.HighlightedText)
+            doc = self.document()
+            for start, end in self._multi_ranges:
+                cursor = QTextCursor(doc)
+                cursor.setPosition(start)
+                cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+                fmt = QTextCharFormat()
+                fmt.setBackground(bg)
+                fmt.setForeground(fg)
+                sel = QTextEdit.ExtraSelection()
+                sel.cursor = cursor
+                sel.format = fmt
+                selections.append(sel)
+        self.setExtraSelections(selections)
+
+    def _clear_multi(self):
+        self._multi_dragging = False
+        if self._multi_ranges:
+            self._multi_ranges = []
+        self.setExtraSelections([])
 
     def canInsertFromMimeData(self, source):
         return source.hasImage() or super().canInsertFromMimeData(source)
@@ -793,6 +910,11 @@ class MoonScribe(QMainWindow):
         # style's default light-grey box, so leave tabsClosable off here.
         self.tabs.setTabsClosable(False)
         self.tabs.currentChanged.connect(self._on_tab_changed)
+        # Right-click a tab to rename it (handy for notebook-style sessions —
+        # name tabs without having to save each one to its own file).
+        tab_bar = self.tabs.tabBar()
+        tab_bar.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        tab_bar.customContextMenuRequested.connect(self._tabbar_context_menu)
 
         # A slim "update available" notice lives just above the editor, tucked
         # under the toolbars.  It stays hidden unless the launch-time check finds
@@ -1067,6 +1189,59 @@ class MoonScribe(QMainWindow):
         if self.tabs.count() == 0:
             self._add_tab()
         self._update_tabbar_visibility()
+
+    def _tabbar_context_menu(self, pos):
+        """Right-click menu on a tab: rename (or close) it."""
+        bar = self.tabs.tabBar()
+        index = bar.tabAt(pos)
+        if index < 0:
+            return
+        menu = QMenu(self)
+        rename_act = menu.addAction("Rename tab…")
+        rename_act.triggered.connect(lambda _=False, i=index: self._rename_tab(i))
+        menu.addSeparator()
+        close_act = menu.addAction("Close tab")
+        close_act.triggered.connect(lambda _=False, i=index: self._close_tab(i))
+        menu.exec(bar.mapToGlobal(pos))
+
+    def _rename_tab(self, index):
+        """Give a tab a custom name without saving it to a file — the label is
+        stored on the note (and travels into notebooks, which already keep each
+        tab's name).  Note: once a tab is saved to a file, its filename shows."""
+        editor = self.tabs.widget(index)
+        if editor is None:
+            return
+        if editor._suggested:
+            current = editor._suggested
+        elif editor._path:
+            current = os.path.splitext(os.path.basename(editor._path))[0]
+        else:
+            current = ""
+
+        theme = THEMES[self._current_theme]
+        dialog = QInputDialog(self)
+        dialog.setWindowTitle("Rename tab")
+        dialog.setLabelText("Tab name:")
+        dialog.setTextValue(current)
+        dialog.setInputMode(QInputDialog.InputMode.TextInput)
+        dialog.setStyleSheet(
+            f"QInputDialog, QDialog {{ background: {theme['chrome_bottom']}; }}"
+            f"QLabel {{ color: {theme['chrome_fg']}; background: transparent; }}"
+            f"QLineEdit {{ background: {theme['surface']}; color: {theme['chrome_fg']};"
+            f" border: 1px solid {theme['border']}; border-radius: 6px; padding: 5px; }}"
+            f"QPushButton {{ background: {theme['surface']}; color: {theme['chrome_fg']};"
+            f" border: 1px solid {theme['border']}; border-radius: 6px; padding: 5px 16px; }}"
+            f"QPushButton:hover {{ background: {theme['button_hover']}; }}"
+        )
+        if not dialog.exec():
+            return
+        name = dialog.textValue().strip()
+        if not name:
+            return
+        editor._suggested = name
+        self._update_tab_label(editor)
+        if editor is self.editor:
+            self._update_title()
 
     def _confirm_close_editor(self, editor):
         """Return True if this note is safe to close (saved, discarded, or had
@@ -1563,11 +1738,29 @@ class MoonScribe(QMainWindow):
         self._apply_theme(nxt)
 
     def _merge_format(self, fmt):
-        """Apply a char format to the selection, or to future typing if none."""
-        cursor = self.editor.textCursor()
+        """Apply a char format to the selection, or to future typing if none.
+
+        When a format-only multi-selection is active (Ctrl+drag), apply the
+        format to every gathered range in a single undo step instead.
+        """
+        editor = self.editor
+        if getattr(editor, "_multi_ranges", None):
+            anchor = editor.textCursor()
+            anchor.beginEditBlock()
+            doc = editor.document()
+            for start, end in editor._multi_ranges:
+                cursor = QTextCursor(doc)
+                cursor.setPosition(start)
+                cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+                cursor.mergeCharFormat(fmt)
+            anchor.endEditBlock()
+            editor._repaint_multi()  # positions unchanged; keep the highlights
+            editor.setFocus()
+            return
+        cursor = editor.textCursor()
         cursor.mergeCharFormat(fmt)
-        self.editor.mergeCurrentCharFormat(fmt)
-        self.editor.setFocus()
+        editor.mergeCurrentCharFormat(fmt)
+        editor.setFocus()
 
     def _insert_columns(self, n):
         """Insert an n-column layout (a soft-bordered table) at the cursor.
@@ -1820,7 +2013,7 @@ class MoonScribe(QMainWindow):
         fmt = QTextCharFormat()
         fmt.setFontFamilies([family])
         self._merge_format(fmt)
-        if not self.editor.textCursor().hasSelection():
+        if not self.editor.textCursor().hasSelection() and not self.editor.has_multi():
             self._base_font.setFamily(family)
             # Only set the document default while empty — otherwise this would
             # retroactively re-font text already typed without an explicit
@@ -1873,7 +2066,7 @@ class MoonScribe(QMainWindow):
         fmt = QTextCharFormat()
         fmt.setFontPointSize(size)
         self._merge_format(fmt)
-        if not self.editor.textCursor().hasSelection():
+        if not self.editor.textCursor().hasSelection() and not self.editor.has_multi():
             self._base_font.setPointSizeF(size)
             # Only push the base font onto the document as its default while it's
             # still empty. Doing it once there's text would retroactively resize
