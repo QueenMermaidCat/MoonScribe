@@ -14,3 +14,7 @@ desktop.ini
 
 # Design sketchpads (kept local, not published)
 THEME_DRAFTS.md
+
+# Personal notes & notebooks — user data, never commit these
+*.mnote
+*.mnotebook

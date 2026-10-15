@@ -4,6 +4,14 @@ All notable changes to MoonScribe are recorded here. 🌙
 
 The newest version is always at the top.
 
+## v1.4.1 — 2026-10-15
+
+### Fixed
+- **Saving a notebook no longer asks for the name every time.** Once you've
+  opened or saved a notebook, **Save Notebook** writes straight back to that same
+  file. There's also a new **Save Notebook As…** for when you want to save a copy
+  under a different name.
+
 ## v1.4.0 — 2026-08-15
 
 A few cozy little upgrades:

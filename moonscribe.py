@@ -149,7 +149,7 @@ ICON_PNG = resource_path("Icon-MoonScribe.png")
 # quietly asks GitHub's public API for the latest release and, if it's newer,
 # shows a gentle in-app notice pointing at the releases page.  Bump APP_VERSION
 # on every release so older copies out in the wild know they're behind.
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.4.1"
 GITHUB_REPO = "QueenMermaidCat/MoonScribe"
 LATEST_RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 RELEASES_PAGE = f"https://github.com/{GITHUB_REPO}/releases/latest"
@@ -902,6 +902,9 @@ class MoonScribe(QMainWindow):
         # of the app keeps talking to "the editor" exactly as before.
         self._wrap_mode = QTextEdit.LineWrapMode.WidgetWidth  # word wrap on
         self._highlighters = []  # one spell highlighter per open editor
+        # The notebook file this session is working in, so "Save Notebook" can
+        # write straight back to it without re-asking for the name every time.
+        self._notebook_path = None
 
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
@@ -1279,7 +1282,8 @@ class MoonScribe(QMainWindow):
         self._add_action(export_menu, "Plain &Text…", None, self.export_txt)
 
         file_menu.addSeparator()
-        self._add_action(file_menu, "Save Note&book…", None, self.save_notebook)
+        self._add_action(file_menu, "Save Note&book", None, self.save_notebook)
+        self._add_action(file_menu, "Save Notebook As…", None, self.save_notebook_as)
         self._add_action(file_menu, "Open Not&ebook…", None, self.open_notebook)
 
         file_menu.addSeparator()
@@ -2966,14 +2970,32 @@ class MoonScribe(QMainWindow):
         return "Untitled"
 
     def save_notebook(self):
-        """Save every open tab together as one portable .mnotebook file."""
+        """Save the open tabs back to the current notebook file.
+
+        If this session isn't tied to a notebook yet (none opened or saved this
+        run), fall back to asking for a name — but once it has one, saving writes
+        straight back to the same file without re-asking every time.
+        """
+        path = self._notebook_path
+        if not path or not os.path.isdir(os.path.dirname(path) or "."):
+            self.save_notebook_as()
+            return
+        self._write_notebook(path)
+
+    def save_notebook_as(self):
+        """Save every open tab as one portable .mnotebook file, choosing where."""
+        start = self._notebook_path or ("notebook" + NOTEBOOK_EXT)
         path, _ = QFileDialog.getSaveFileName(
-            self, "Save Notebook", "notebook" + NOTEBOOK_EXT, NOTEBOOK_FILTER
+            self, "Save Notebook", start, NOTEBOOK_FILTER
         )
         if not path:
             return
         if not path.lower().endswith(NOTEBOOK_EXT):
             path += NOTEBOOK_EXT
+        self._write_notebook(path)
+
+    def _write_notebook(self, path):
+        """Write every open tab into the .mnotebook at ``path`` and remember it."""
         data = {
             "moonscribe_notebook": 1,
             "active": self.tabs.currentIndex(),
@@ -2992,12 +3014,16 @@ class MoonScribe(QMainWindow):
         except OSError as error:
             QMessageBox.warning(self, "MoonScribe", f"Could not save notebook:\n{error}")
             return
+        self._notebook_path = path  # remember it for next time
         # The tabs are now saved (inside the notebook), so clear their unsaved
         # marks — closing shouldn't nag to save each one individually.
         for editor in self._all_editors():
             editor.document().setModified(False)
             self._update_tab_label(editor)
         self._update_title()
+        self.statusBar().showMessage(
+            f"Notebook saved — {os.path.basename(path)}", 4000
+        )
 
     def open_notebook(self):
         """Open a .mnotebook, restoring all its tabs at once (on request only)."""
@@ -3054,6 +3080,7 @@ class MoonScribe(QMainWindow):
         if not isinstance(active, int) or not (0 <= active < len(tabs)):
             active = 0
         self.tabs.setCurrentIndex(base + active)
+        self._notebook_path = path  # saving now writes back here, no re-prompt
         self._update_tabbar_visibility()
         self._update_title()
         if self.editor is not None:
