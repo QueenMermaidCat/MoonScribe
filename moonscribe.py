@@ -78,6 +78,7 @@ from PyQt6.QtGui import (
     QTextCharFormat,
     QTextCursor,
     QTextDocument,
+    QTextFormat,
     QTextFrameFormat,
     QTextLength,
     QTextListFormat,
@@ -149,7 +150,7 @@ ICON_PNG = resource_path("Icon-MoonScribe.png")
 # quietly asks GitHub's public API for the latest release and, if it's newer,
 # shows a gentle in-app notice pointing at the releases page.  Bump APP_VERSION
 # on every release so older copies out in the wild know they're behind.
-APP_VERSION = "1.4.1"
+APP_VERSION = "1.4.2"
 GITHUB_REPO = "QueenMermaidCat/MoonScribe"
 LATEST_RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 RELEASES_PAGE = f"https://github.com/{GITHUB_REPO}/releases/latest"
@@ -460,6 +461,64 @@ def image_to_html(image, max_width=620):
     return f'<img src="data:image/png;base64,{encoded}" width="{image.width()}" />'
 
 
+def normalize_pasted_font_sizes(doc, start, end, keep_point_size=False):
+    """Make pasted font sizes editable across [start, end).
+
+    Pasted web/ChatGPT content sizes text in two ways Qt's text layout honours
+    *over* the size control, so changing the size seems to do nothing:
+      - a PIXEL size (FontPixelSize) from inline CSS like `font-size:24px`, and
+      - a relative HEADING bump (FontSizeAdjustment) from <h1>..<h6> tags.
+    Both override an explicit point size. This converts each affected run to a
+    plain POINT size (keeping the same on-screen size: px -> pt at 96 dpi is
+    *0.75; a heading's rendered size is read straight from the font) and drops
+    those two properties, so the text responds to the size control again.
+
+    With keep_point_size=True, an existing point size is left untouched (so a
+    size the user just applied wins) and only the two overrides are cleared.
+    """
+    if end <= start:
+        return
+    pixel_prop = QTextFormat.Property.FontPixelSize
+    adjust_prop = QTextFormat.Property.FontSizeAdjustment
+    changes = []  # collect first (editing while iterating fragments is unsafe)
+    block = doc.findBlock(start)
+    while block.isValid() and block.position() < end:
+        it = block.begin()
+        while not it.atEnd():
+            frag = it.fragment()
+            lo = max(frag.position(), start)
+            hi = min(frag.position() + frag.length(), end)
+            if lo < hi:
+                fmt = frag.charFormat()
+                if fmt.hasProperty(pixel_prop) or fmt.hasProperty(adjust_prop):
+                    new_fmt = QTextCharFormat(fmt)
+                    new_fmt.clearProperty(pixel_prop)
+                    new_fmt.clearProperty(adjust_prop)
+                    if not keep_point_size:
+                        # The run's actual on-screen size, with the heading bump
+                        # and/or pixel size already resolved in.
+                        effective = fmt.font().pointSizeF()
+                        if effective <= 0 and fmt.hasProperty(pixel_prop):
+                            px = fmt.property(pixel_prop)
+                            if isinstance(px, (int, float)) and px > 0:
+                                effective = px * 0.75
+                        if effective > 0:
+                            new_fmt.setFontPointSize(round(effective, 1))
+                    changes.append((lo, hi, new_fmt))
+            it += 1
+        block = block.next()
+    if not changes:
+        return
+    editor_cursor = QTextCursor(doc)
+    editor_cursor.beginEditBlock()
+    for lo, hi, new_fmt in changes:
+        run = QTextCursor(doc)
+        run.setPosition(lo)
+        run.setPosition(hi, QTextCursor.MoveMode.KeepAnchor)
+        run.setCharFormat(new_fmt)
+    editor_cursor.endEditBlock()
+
+
 class FormatKeepingTextEdit(QTextEdit):
     """A QTextEdit that keeps the current character format across Enter.
 
@@ -621,7 +680,13 @@ class FormatKeepingTextEdit(QTextEdit):
                         if html:
                             self.textCursor().insertHtml(html)
                             return
+        # Normal (text/HTML) paste. Remember where it lands so we can convert any
+        # pasted pixel font-sizes into editable point sizes right after.
+        start = self.textCursor().selectionStart()
         super().insertFromMimeData(source)
+        end = self.textCursor().position()
+        if end > start:
+            normalize_pasted_font_sizes(self.document(), start, end)
 
 
 class BrandingLabel(QWidget):
@@ -2070,6 +2135,22 @@ class MoonScribe(QMainWindow):
         fmt = QTextCharFormat()
         fmt.setFontPointSize(size)
         self._merge_format(fmt)
+        # Pasted web/ChatGPT titles carry a leftover pixel size that would
+        # override the point size we just set — clear it on the affected text so
+        # the change actually takes (covers content pasted before this fix too).
+        editor = self.editor
+        if getattr(editor, "_multi_ranges", None):
+            for rng_start, rng_end in editor._multi_ranges:
+                normalize_pasted_font_sizes(
+                    editor.document(), rng_start, rng_end, keep_point_size=True
+                )
+        else:
+            sel = editor.textCursor()
+            if sel.hasSelection():
+                normalize_pasted_font_sizes(
+                    editor.document(), sel.selectionStart(), sel.selectionEnd(),
+                    keep_point_size=True,
+                )
         if not self.editor.textCursor().hasSelection() and not self.editor.has_multi():
             self._base_font.setPointSizeF(size)
             # Only push the base font onto the document as its default while it's

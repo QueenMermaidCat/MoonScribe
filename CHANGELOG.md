@@ -4,6 +4,15 @@ All notable changes to MoonScribe are recorded here. 🌙
 
 The newest version is always at the top.
 
+## v1.4.2 — 2026-11-27
+
+### Fixed
+- **Pasted titles can now be resized.** Text pasted from the web (ChatGPT
+  especially) came in with its own locked-in font sizes that ignored the size
+  control, so headings and large titles wouldn't change. Pasted content is now
+  converted to normal, editable sizes — so you can freely change the font or
+  size of anything you paste in.
+
 ## v1.4.1 — 2026-10-15
 
 ### Fixed
